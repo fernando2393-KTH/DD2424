@@ -19,16 +19,32 @@ def softmax(s):
     return np.exp(s) / np.sum(np.exp(s), axis=0)
 
 
+def l_cross(y, p):
+    return -np.log(p[y])
+
+
 def evaluate_classifier(data, weight, bias):
-    x = data.T  # Transpose data to get the appropriate format --> d x n
-    s = weight @ x + bias  # Dim: k x n
+    s = weight @ data + bias  # Dim: k x n
 
     return softmax(s)
 
 
 def compute_cost(data, labels, weight, bias, lmb):
-    x = data.T  # Transpose data to get the appropriate format --> d x n
-    y = np.array(labels).reshape(1, len(labels))
+    p = evaluate_classifier(data, weight, bias)  # Dim: k x n
+    l_cross_sum = 0
+    for i in range(data.shape[1]):
+        l_cross_sum += l_cross(labels[i], p[:, i])
+    reg = lmb * np.sum(np.sum(np.square(weight)))  # Regularization term L2
+
+    return (1 / data.shape[1]) * l_cross_sum + reg
+
+
+def compute_accuracy(data, labels, weight, bias):
+    p = evaluate_classifier(data, weight, bias)  # Dim: k x n
+    prediction = np.argmax(p, axis=0)
+    real = np.array(labels).reshape(prediction.shape)
+
+    return np.sum(real == prediction) / len(labels)
 
 
 def preprocess_images(data):
@@ -87,11 +103,7 @@ def main():
     bias = np.random.normal(0, 0.01, (len(label_names), 1))  # Dim: k x 1
 
     # Preprocess traning data
-    data_train = preprocess_images(data_train)
-    
-    # Compute probabilities
-    prob = evaluate_classifier(data_train, weight, bias)
-    compute_cost(data_train, labels_train, weight, bias, 1)
+    data_train = preprocess_images(data_train).T  # Transpose data to get the appropriate format --> d x ns
 
 
 if __name__ == "__main__":
