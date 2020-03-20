@@ -6,6 +6,7 @@ LENGTH = 1024  # Number of pixels of the image
 SIZE = 32  # Pixel dimension of the image
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
+ETA = 0.001
 
 
 def unpickle(file):
@@ -20,7 +21,7 @@ def softmax(s):
 
 
 def l_cross(y, p):
-    return -np.log(p[y])
+    return -np.log(np.sum(y * p, axis=0))
 
 
 def evaluate_classifier(data, weight, bias):
@@ -31,9 +32,8 @@ def evaluate_classifier(data, weight, bias):
 
 def compute_cost(data, labels, weight, bias, lmb):
     p = evaluate_classifier(data, weight, bias)  # Dim: k x n
-    l_cross_sum = 0
-    for i in range(data.shape[1]):
-        l_cross_sum += l_cross(labels[i], p[:, i])
+    l_cross_sum = l_cross(labels, p)
+    l_cross_sum = np.sum(l_cross_sum)
     reg = lmb * np.sum(np.sum(np.square(weight)))  # Regularization term L2
 
     return (1 / data.shape[1]) * l_cross_sum + reg
@@ -42,57 +42,17 @@ def compute_cost(data, labels, weight, bias, lmb):
 def compute_accuracy(data, labels, weight, bias):
     p = evaluate_classifier(data, weight, bias)  # Dim: k x n
     prediction = np.argmax(p, axis=0)
-    real = np.array(labels).reshape(prediction.shape)
+    real = np.argmax(labels, axis=0)
 
-    return np.sum(real == prediction) / len(labels)
-
-
-def compute_grads_num(data, labels, weight, bias, h, lmb):
-    grad_weight = np.zeros(weight.shape)
-    grad_bias = np.zeros(bias.shape)
-
-    c = compute_cost(data, labels, weight, bias, lmb)
-
-    for i in range(bias.shape[0]):
-        bias_aux = np.copy(bias)
-        bias_aux[i] += h
-        c2 = compute_cost(data, labels, weight, bias_aux, lmb)
-        grad_bias[i] = (c2 - c) / h
-
-    for i in range(weight.shape[0]):
-        for j in range(weight.shape[1]):
-            weight_aux = np.copy(weight)
-            weight_aux[i, j] += h
-            c2 = compute_cost(data, labels, weight_aux, bias, lmb)
-            grad_weight[i, j] = (c2 - c) / h
-
-    return grad_weight, grad_bias
+    return np.sum(real == prediction) / len(real)
 
 
-def compute_grads_num_slow(data, labels, weight, bias, h, lmb):
-    grad_weight = np.zeros(weight.shape)
-    grad_bias = np.zeros(bias.shape)
+def compute_grads_analytic(data, labels, weight, lmb, p):
+    grad_bias = -(labels - p)  # Dim: k x n
+    grad_weight = grad_bias @ data.T + 2 * lmb * weight
+    grad_bias = np.sum(grad_bias, axis=1)[:, np.newaxis]
 
-    for i in range(bias.shape[0]):
-        bias_aux = np.copy(bias)
-        bias_aux[i] -= h
-        c1 = compute_cost(data, labels, weight, bias_aux, lmb)
-        bias_aux = np.copy(bias)
-        bias_aux[i] += h
-        c2 = compute_cost(data, labels, weight, bias_aux, lmb)
-        grad_bias[i] = (c2 - c1) / (2 * h)
-
-    for i in range(weight.shape[0]):
-        for j in range(weight.shape[1]):
-            weight_aux = np.copy(weight)
-            weight_aux[i, j] -= h
-            c1 = compute_cost(data, labels, weight_aux, bias, lmb)
-            weight_aux = np.copy(weight)
-            weight_aux[i, j] += h
-            c2 = compute_cost(data, labels, weight_aux, bias, lmb)
-            grad_weight[i, j] = (c2 - c1) / (2 * h)
-
-    return grad_weight, grad_bias
+    return grad_weight / data.shape[1], grad_bias / data.shape[1]
 
 
 def preprocess_images(data, mean, std):
@@ -104,6 +64,14 @@ def preprocess_images(data, mean, std):
     data /= std
 
     return np.array(data), mean, std
+
+
+def one_hot(labels, dim):
+    labels_mat = np.zeros((dim, len(labels)))
+    for i in range(len(labels)):
+        labels_mat[labels[i], i] = 1
+
+    return labels_mat
 
 
 def get_images(data):
@@ -135,6 +103,7 @@ def visualize_images(images, labels, label_names, number=5):
 
 
 def main():
+    np.random.seed(42)
     file = unpickle(DATAPATH + D_BATCH[0])
     data_train = file['data']  # Images data for training
     labels_train = file['labels']  # Images labels for training
@@ -153,11 +122,22 @@ def main():
 
     # Preprocess traning data
     data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)
-    data_train = data_train.T  # Transpose data to get the appropriate format --> d x ns
+    data_train = data_train.T  # Transpose data to get the appropriate format --> d x n
     data_val = preprocess_images(data_val, mean_train, std_train)[0].T  # Std. val. using training mean and std
     data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
 
-    compute_grads_num_slow(data_train, labels_train, weight, bias, 1, 1)
+    # Convert labels to one-hot matrix
+    labels_train = one_hot(labels_train, len(label_names))
+    labels_val = one_hot(labels_val, len(label_names))
+    labels_test = one_hot(labels_test, len(label_names))
+
+    # compute_cost(data_train, labels_train, weight, bias, 0)
+
+    for i in range(10):
+        delta_w, delta_b = compute_grads_analytic(data_train[:, 0:5], labels_train[:, 0:5], weight, 0,
+                                                  evaluate_classifier(data_train[:, 0:5], weight, bias))
+        weight -= ETA * delta_w
+        bias -= ETA * delta_b
 
 
 if __name__ == "__main__":
