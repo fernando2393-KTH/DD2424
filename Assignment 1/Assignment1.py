@@ -47,14 +47,63 @@ def compute_accuracy(data, labels, weight, bias):
     return np.sum(real == prediction) / len(labels)
 
 
-def preprocess_images(data):
+def compute_grads_num(data, labels, weight, bias, h, lmb):
+    grad_weight = np.zeros(weight.shape)
+    grad_bias = np.zeros(bias.shape)
+
+    c = compute_cost(data, labels, weight, bias, lmb)
+
+    for i in range(bias.shape[0]):
+        bias_aux = np.copy(bias)
+        bias_aux[i] += h
+        c2 = compute_cost(data, labels, weight, bias_aux, lmb)
+        grad_bias[i] = (c2 - c) / h
+
+    for i in range(weight.shape[0]):
+        for j in range(weight.shape[1]):
+            weight_aux = np.copy(weight)
+            weight_aux[i, j] += h
+            c2 = compute_cost(data, labels, weight_aux, bias, lmb)
+            grad_weight[i, j] = (c2 - c) / h
+
+    return grad_weight, grad_bias
+
+
+def compute_grads_num_slow(data, labels, weight, bias, h, lmb):
+    grad_weight = np.zeros(weight.shape)
+    grad_bias = np.zeros(bias.shape)
+
+    for i in range(bias.shape[0]):
+        bias_aux = np.copy(bias)
+        bias_aux[i] -= h
+        c1 = compute_cost(data, labels, weight, bias_aux, lmb)
+        bias_aux = np.copy(bias)
+        bias_aux[i] += h
+        c2 = compute_cost(data, labels, weight, bias_aux, lmb)
+        grad_bias[i] = (c2 - c1) / (2 * h)
+
+    for i in range(weight.shape[0]):
+        for j in range(weight.shape[1]):
+            weight_aux = np.copy(weight)
+            weight_aux[i, j] -= h
+            c1 = compute_cost(data, labels, weight_aux, bias, lmb)
+            weight_aux = np.copy(weight)
+            weight_aux[i, j] += h
+            c2 = compute_cost(data, labels, weight_aux, bias, lmb)
+            grad_weight[i, j] = (c2 - c1) / (2 * h)
+
+    return grad_weight, grad_bias
+
+
+def preprocess_images(data, mean, std):
     data = np.float64(data)  # Conversion of data to float64 to perform needed calculations
-    mean = np.mean(data, axis=0)  # Mean of the columns
-    std = np.std(data, axis=0)  # Std of the columns
+    if mean is None and std is None:
+        mean = np.mean(data, axis=0)  # Mean of the columns
+        std = np.std(data, axis=0)  # Std of the columns
     data -= mean
     data /= std
 
-    return np.array(data)
+    return np.array(data), mean, std
 
 
 def get_images(data):
@@ -103,7 +152,12 @@ def main():
     bias = np.random.normal(0, 0.01, (len(label_names), 1))  # Dim: k x 1
 
     # Preprocess traning data
-    data_train = preprocess_images(data_train).T  # Transpose data to get the appropriate format --> d x ns
+    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)
+    data_train = data_train.T  # Transpose data to get the appropriate format --> d x ns
+    data_val = preprocess_images(data_val, mean_train, std_train)[0].T  # Std. val. using training mean and std
+    data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
+
+    compute_grads_num_slow(data_train, labels_train, weight, bias, 1, 1)
 
 
 if __name__ == "__main__":
