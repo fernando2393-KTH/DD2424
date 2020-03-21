@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 DATAPATH = 'Datasets/cifar-10-batches-py/'
 LENGTH = 1024  # Number of pixels of the image
 SIZE = 32  # Pixel dimension of the image
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
-ETA = 0.001
 
 
 def unpickle(file):
@@ -93,17 +93,36 @@ def read_image(colors):
 def visualize_images(images, labels, label_names, number=5):
     ig, axes = plt.subplots(number, number)
     indices = np.random.choice(range(len(images)), pow(number, 2))
+    labels_aux = np.argmax(labels, axis=0)
     for i in range(number):
         for j in range(number):
             axes[i, j].set_axis_off()
-            axes[i, j].text(0.5, -0.5, 'Category: ' + str(label_names[labels[indices[i * number + j]]]),
+            axes[i, j].text(0.5, -0.5, 'Category: ' + str(label_names[labels_aux[indices[i * number + j]]]),
                             size=6, ha="center", transform=axes[i, j].transAxes)
             axes[i, j].imshow(images[indices[i * number + j]], interpolation='bicubic')
     plt.show()
 
 
+def visualize_weight(weight, label_names):
+    images = list()
+    for i in range(weight.shape[0]):
+        red = np.array(weight[i][0:LENGTH]).reshape(SIZE, SIZE)
+        green = np.array(weight[i][LENGTH:2 * LENGTH]).reshape(SIZE, SIZE)
+        blue = np.array(weight[i][2 * LENGTH:3 * LENGTH]).reshape(SIZE, SIZE)
+        img = np.dstack((red, green, blue))
+        images.append((img - np.min(img)) / (np.max(img) - np.min(img)))
+    ig, axes = plt.subplots(2, int(weight.shape[0] / 2))
+    for i in range(axes.shape[0]):
+        for j in range(axes.shape[1]):
+            axes[i, j].set_axis_off()
+            axes[i, j].text(0.5, -0.25, 'Category: ' + str(label_names[i * axes.shape[1] + j]),
+                            size=8, ha="center", transform=axes[i, j].transAxes)
+            axes[i, j].imshow(images[i * axes.shape[1] + j], interpolation='bicubic')
+    plt.show()
+
+
 def main():
-    np.random.seed(42)
+    # Data reading
     file = unpickle(DATAPATH + D_BATCH[0])
     data_train = file['data']  # Images data for training
     labels_train = file['labels']  # Images labels for training
@@ -116,28 +135,53 @@ def main():
     file = unpickle(DATAPATH + 'batches.meta')
     label_names = file['label_names']  # Images class of each label
 
-    # Initialize model parameters
-    weight = np.random.normal(0, 0.01, (len(label_names), data_train.shape[1]))  # Dim: k x d
-    bias = np.random.normal(0, 0.01, (len(label_names), 1))  # Dim: k x 1
+    # Obtain images
+    # images_train = get_images(data_train)
+    # images_val = get_images(data_val)
+    # images_test = get_images(data_test)
 
-    # Preprocess traning data
-    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)
+    # Data preprocessing
+    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)  # Preprocess traning data
     data_train = data_train.T  # Transpose data to get the appropriate format --> d x n
     data_val = preprocess_images(data_val, mean_train, std_train)[0].T  # Std. val. using training mean and std
     data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
+    labels_train = one_hot(labels_train, len(label_names))  # Convert training labels to one-hot matrix
+    labels_val = one_hot(labels_val, len(label_names))  # Convert validation labels to one-hot matrix
+    labels_test = one_hot(labels_test, len(label_names))  # Convert test labels to one-hot matrix
 
-    # Convert labels to one-hot matrix
-    labels_train = one_hot(labels_train, len(label_names))
-    labels_val = one_hot(labels_val, len(label_names))
-    labels_test = one_hot(labels_test, len(label_names))
+    # Initialize model parameters
+    weight = np.random.normal(0, 0.01, (len(label_names), data_train.shape[0]))  # Dim: k x d
+    bias = np.random.normal(0, 0.01, (len(label_names), 1))  # Dim: k x 1
+    n_batch = 100  # Define minibatch size
+    n_epoch = 40  # Define number of epochs
+    lmb = 0  # Define lambda
+    eta = 0.001  # Define learning rate
+    training_loss = list()  # Training data loss per epoch
+    validation_loss = list()  # Validation data loss per epoch
+    
+    # Perform training
+    print("Training model...")
+    for _ in tqdm(range(n_epoch)):
+        for j in range(int(data_train.shape[1] / n_batch)):
+            start = j * n_batch
+            end = (j + 1) * n_batch
+            delta_w, delta_b = compute_grads_analytic(data_train[:, start:end], labels_train[:, start:end], weight, lmb,
+                                                      evaluate_classifier(data_train[:, start:end], weight, bias))
+            weight -= eta * delta_w
+            bias -= eta * delta_b
+        training_loss.append(compute_cost(data_train, labels_train, weight, bias, lmb))
+        validation_loss.append(compute_cost(data_val, labels_val, weight, bias, lmb))
 
-    # compute_cost(data_train, labels_train, weight, bias, 0)
+    visualize_weight(weight, label_names)
 
-    for i in range(10):
-        delta_w, delta_b = compute_grads_analytic(data_train[:, 0:5], labels_train[:, 0:5], weight, 0,
-                                                  evaluate_classifier(data_train[:, 0:5], weight, bias))
-        weight -= ETA * delta_w
-        bias -= ETA * delta_b
+    # Show results
+    plt.plot(range(len(training_loss)), training_loss, label="Training loss", color="Green")
+    plt.plot(range(len(validation_loss)), validation_loss, label="Validation loss", color="Red")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
+    print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weight, bias) * 100) + "%")
 
 
 if __name__ == "__main__":
