@@ -30,13 +30,19 @@ def evaluate_classifier(data, weight, bias):
     return softmax(s)
 
 
-def compute_cost(data, labels, weight, bias, lmb):
+def compute_loss(data, labels, weight, bias):
     p = evaluate_classifier(data, weight, bias)  # Dim: k x n
     l_cross_sum = l_cross(labels, p)
     l_cross_sum = np.sum(l_cross_sum)
+
+    return (1 / data.shape[1]) * l_cross_sum
+
+
+def compute_cost(data, labels, weight, bias, lmb):
+    loss = compute_loss(data, labels, weight, bias)
     reg = lmb * np.sum(np.sum(np.square(weight)))  # Regularization term L2
 
-    return (1 / data.shape[1]) * l_cross_sum + reg
+    return loss + reg
 
 
 def compute_accuracy(data, labels, weight, bias):
@@ -49,10 +55,10 @@ def compute_accuracy(data, labels, weight, bias):
 
 def compute_grads_analytic(data, labels, weight, lmb, p):
     grad_bias = -(labels - p)  # Dim: k x n
-    grad_weight = grad_bias @ data.T + 2 * lmb * weight
+    grad_weight = (grad_bias @ data.T) / data.shape[1] + 2 * lmb * weight
     grad_bias = np.sum(grad_bias, axis=1)[:, np.newaxis]
 
-    return grad_weight / data.shape[1], grad_bias / data.shape[1]
+    return grad_weight, grad_bias / data.shape[1]
 
 
 def preprocess_images(data, mean, std):
@@ -121,7 +127,17 @@ def visualize_weight(weight, label_names):
     plt.show()
 
 
+def plot_results(train, val, mode):
+    plt.plot(range(len(train)), train, label="Training " + mode, color="Green")
+    plt.plot(range(len(val)), val, label="Validation " + mode, color="Red")
+    plt.xlabel("Epoch")
+    plt.ylabel(mode.capitalize())
+    plt.legend()
+    plt.show()
+
+
 def main():
+    np.random.seed(42)
     # Data reading
     file = unpickle(DATAPATH + D_BATCH[0])
     data_train = file['data']  # Images data for training
@@ -155,9 +171,11 @@ def main():
     n_batch = 100  # Define minibatch size
     n_epoch = 40  # Define number of epochs
     lmb = 0  # Define lambda
-    eta = 0.001  # Define learning rate
+    eta = 0.1  # Define learning rate
     training_loss = list()  # Training data loss per epoch
     validation_loss = list()  # Validation data loss per epoch
+    training_cost = list()  # Training data cost per epoch
+    validation_cost = list()  # Validation data cost per epoch
     
     # Perform training
     print("Training model...")
@@ -169,18 +187,16 @@ def main():
                                                       evaluate_classifier(data_train[:, start:end], weight, bias))
             weight -= eta * delta_w
             bias -= eta * delta_b
-        training_loss.append(compute_cost(data_train, labels_train, weight, bias, lmb))
-        validation_loss.append(compute_cost(data_val, labels_val, weight, bias, lmb))
+        training_loss.append(compute_loss(data_train, labels_train, weight, bias))
+        validation_loss.append(compute_loss(data_val, labels_val, weight, bias))
+        training_cost.append(compute_cost(data_train, labels_train, weight, bias, lmb))
+        validation_cost.append(compute_cost(data_val, labels_val, weight, bias, lmb))
 
     visualize_weight(weight, label_names)
 
     # Show results
-    plt.plot(range(len(training_loss)), training_loss, label="Training loss", color="Green")
-    plt.plot(range(len(validation_loss)), validation_loss, label="Validation loss", color="Red")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.show()
+    plot_results(training_loss, validation_loss, "loss")
+    plot_results(training_cost, validation_cost, "cost")
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weight, bias) * 100) + "%")
 
 
