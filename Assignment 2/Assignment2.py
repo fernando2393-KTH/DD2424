@@ -33,7 +33,7 @@ def initialize_network(data_train, label_names):
 def forward_pass(data_train, weights, bias):
     output = list()  # Output of previous layer list
     s_list = list()  # s values list
-    output.append(data_train)
+    output.append(np.copy(data_train))
     s_list.append(compute_s(data_train, weights[0], bias[0]))
     for i in range(1, len(weights)):
         output.append(compute_h(s_list[-1]))
@@ -41,6 +41,13 @@ def forward_pass(data_train, weights, bias):
 
     return output, s_list
 
+
+def cyclical_update(t, n_s, eta_min, eta_max):
+    cycle = int(t / (2 * n_s))  # Number of complete cycles elapsed
+    if 2 * cycle * n_s <= t <= (2 * cycle + 1) * n_s:
+        return eta_min + (t - 2 * cycle * n_s) / n_s * (eta_max - eta_min)
+    if (2 * cycle + 1) * n_s <= t <= 2 * (cycle + 1) * n_s:
+        return eta_max - (t - (2 * cycle + 1) * n_s) / n_s * (eta_max - eta_min)
 
 
 def softmax(s):
@@ -61,31 +68,31 @@ def compute_s(data, weight, bias):
     return s
 
 
-def compute_loss(data, labels, p):
-    l_cross_sum = l_cross(labels, p)
-    l_cross_sum = np.sum(l_cross_sum)
+def compute_loss(data, labels, weights, bias):
+    p = softmax(forward_pass(data, weights, bias)[1][-1])  # Value of s_2 computed in the forward pass
+    l_cross_sum = np.sum(l_cross(labels, p))
 
     return (1 / data.shape[1]) * l_cross_sum
 
 
-def compute_cost(data, labels, weights, lmb, p):
-    loss = compute_loss(data, labels, p)
-    reg = lmb * np.sum([np.sum(np.square(w)) for w in weights])   # Regularization term L2
+def compute_cost(data, labels, weights, bias, lmb):
+    loss = compute_loss(data, labels, weights, bias)
+    reg = lmb * np.sum([np.sum(np.square(w)) for w in weights])  # Regularization term L2
 
     return loss + reg
 
 
-def compute_accuracy(labels, p):
+def compute_accuracy(data, labels, weights, bias):
+    p = softmax(forward_pass(data, weights, bias)[1][-1])  # Value of s_2 computed in the forward pass
     prediction = np.argmax(p, axis=0)
     real = np.argmax(labels, axis=0)
 
     return np.sum(real == prediction) / len(real)
 
 
-def compute_grads_analytic(data, s, labels, weights, lmb, p):
+def compute_grads_analytic(data, labels, weights, lmb, p):
     grad_weights = list()
     grad_bias = list()
-
     # Last layer --> data[0] is the original input
     g = -(labels - p)  # Dim: k x n
     grad_weights.append((g @ data[-1].T) / data[0].shape[1] + 2 * lmb * weights[-1])
@@ -93,9 +100,9 @@ def compute_grads_analytic(data, s, labels, weights, lmb, p):
     # Remaining layers
     for i in reversed(range(len(data) - 1)):  # Reverse traversal of the lists
         g = weights[i + 1].T @ g  # Multiply by previous weight
-        diag = np.copy(s[i])  # Perform a copy of the output of the previous layer
+        diag = np.copy(data[i + 1])  # Perform a copy of the output of the previous layer
         diag[diag > 0] = 1  # Transform every element > 0 into 1
-        diag[diag < 0] = 0  # Transform every element < 0 into 0
+        # diag[diag < 0] = 0  # Transform every element < 0 into 0
         g = g * diag  # Element multiplication by diagonal of the indicator over data[i]
         grad_weights.append((g @ data[i].T) / data[0].shape[1] + 2 * lmb * weights[i])
         grad_bias.append(np.sum(g, axis=1)[:, np.newaxis] / data[0].shape[1])
@@ -208,39 +215,46 @@ def main():
     weights, bias = initialize_network(data_train, label_names)
 
     n_batch = 100  # Define minibatch size
-    n_epoch = 40  # Define number of epochs
-    lmb = 1  # Define lambda
-    eta = 0.001  # Define learning rate
+    lmb = 0.01  # Define lambda
+    eta_min = 1e-5  # Minimum value of eta
+    eta_max = 1e-1  # Maximum value of eta
+    eta = eta_min  # Define learning rate
+    n_s = 800  # Step size in eta value modification
+    cycles = 3 * 2 * n_s  # Number of eta updates
+    cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
+    n_epoch = cycles / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
     training_loss = list()  # Training data loss per epoch
     validation_loss = list()  # Validation data loss per epoch
     training_cost = list()  # Training data cost per epoch
     validation_cost = list()  # Validation data cost per epoch
+    eta_val = list()
 
     # Perform training
     print("Training model...")
-    for _ in tqdm(range(n_epoch)):
-        data, s_list = forward_pass(data_train, weights, bias)
+    for t in tqdm(range(int(n_epoch))):
         for j in range(int(data_train.shape[1] / n_batch)):
+            eta_val.append(eta)
             start = j * n_batch
             end = (j + 1) * n_batch
-            delta_w, delta_b = compute_grads_analytic([i[:, start:end] for i in data],
-                                                      [i[:, start:end] for i in s_list],
-                                                      labels_train[:, start:end],
-                                                      weights, lmb, softmax(s_list[-1][:, start:end]))
+            data, s_list = forward_pass(data_train[:, start:end], weights, bias)
+            delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end],
+                                                      weights, lmb, softmax(s_list[-1]))
             weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
             bias = [bias[i] - eta * delta_b[i] for i in range(len(bias))]
-        training_loss.append(compute_loss(data_train, labels_train, softmax(s_list[-1])))
-        validation_loss.append(compute_loss(data_val, labels_val, softmax(s_list[-1])))
-        training_cost.append(compute_cost(data_train, labels_train, weights, lmb, softmax(s_list[-1])))
-        validation_cost.append(compute_cost(data_val, labels_val, weights, lmb, softmax(s_list[-1])))
-
-    # visualize_weight(weights[1], label_names)
+            eta = cyclical_update((t * cycles_per_epoch) + j, n_s, eta_min, eta_max)  # Cyclical uptadte of eta
+        training_loss.append(compute_loss(data_train, labels_train, weights, bias))
+        validation_loss.append(compute_loss(data_val, labels_val, weights, bias))
+        training_cost.append(compute_cost(data_train, labels_train, weights, bias, lmb))
+        validation_cost.append(compute_cost(data_val, labels_val, weights, bias, lmb))
 
     # Show results
-    s_2 = forward_pass(data_train, weights, bias)[1][-1]
+    plt.plot(range(len(eta_val)), eta_val)
+    plt.xlabel("Cycle")
+    plt.ylabel(r"$\eta_{value}$")
+    plt.show()
     plot_results(training_loss, validation_loss, "loss")
     plot_results(training_cost, validation_cost, "cost")
-    print("Accuracy on test data: " + str(compute_accuracy(labels_test, softmax(s_2)) * 100) + "%")
+    print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
 
 if __name__ == "__main__":
