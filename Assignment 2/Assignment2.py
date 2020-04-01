@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os.path
 from tqdm import tqdm
 
 DATAPATH = 'Datasets/cifar-10-batches-py/'
@@ -8,6 +9,7 @@ SIZE = 32  # Pixel dimension of the image
 HIDDEN_NODES = 50  # Number of nodes in the hidden layer
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
+SIZE_VAL = 5000
 
 
 def unpickle(file):
@@ -186,15 +188,77 @@ def plot_results(train, val, mode):
     plt.show()
 
 
+def train_network(data_train, labels_train, data_val, labels_val,
+                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
+                  plotting=False, best_lambda=None, lmb_search=True):
+    if lmb_search:
+        if best_lambda is None:
+            l_val = np.random.uniform(-5, -1)  # Random sample from -5 to -1 interval in log10 scale
+            lmb = pow(10, l_val)  # Get random lambda
+        else:
+            l_val = np.random.uniform(best_lambda[0], best_lambda[1])  # Random sample from
+            # the interval defined by the two best previous lambdas in log10 scale
+            lmb = pow(10, l_val)  # Define lambda
+    else:
+        lmb = pow(10, best_lambda)
+    iterations = cycles * 2 * n_s  # Number of eta updates
+    cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
+    n_epoch = iterations / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
+    training_loss = list()  # Training data loss per epoch
+    validation_loss = list()  # Validation data loss per epoch
+    training_cost = list()  # Training data cost per epoch
+    validation_cost = list()  # Validation data cost per epoch
+    acc_training = list()
+    acc_val = list()
+    eta_val = list()  # Value of eta per cycle
+    for t in tqdm(range(int(n_epoch))):
+        for j in range(int(data_train.shape[1] / n_batch)):
+            eta_val.append(eta)
+            start = j * n_batch
+            end = (j + 1) * n_batch
+            data, s_list = forward_pass(data_train[:, start:end], weights, bias)
+            delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end],
+                                                      weights, lmb, softmax(s_list[-1]))
+            weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
+            bias = [bias[i] - eta * delta_b[i] for i in range(len(bias))]
+            eta = cyclical_update((t * cycles_per_epoch) + j, n_s, eta_min, eta_max)  # Cyclical uptadte of eta
+        if plotting:
+            training_loss.append(compute_loss(data_train, labels_train, weights, bias))
+            validation_loss.append(compute_loss(data_val, labels_val, weights, bias))
+            training_cost.append(compute_cost(data_train, labels_train, weights, bias, lmb))
+            validation_cost.append(compute_cost(data_val, labels_val, weights, bias, lmb))
+            acc_training.append(compute_accuracy(data_train, labels_train, weights, bias))
+            acc_val.append(compute_accuracy(data_val, labels_val, weights, bias))
+
+    # Show results
+    if plotting:
+        plt.plot(range(len(eta_val)), eta_val)
+        plt.xlabel("Update step")
+        plt.ylabel(r"$\eta_{value}$")
+        plt.show()
+        plot_results(acc_training, acc_val, "accuracy")
+        plot_results(training_loss, validation_loss, "loss")
+        plot_results(training_cost, validation_cost, "cost")
+
+    return weights, bias, compute_accuracy(data_val, labels_val, weights, bias), np.log10(lmb)
+
+
 def main():
-    np.random.seed(42)
-    # Reading training and validation data
+    np.random.seed(8)
     file = unpickle(DATAPATH + D_BATCH[0])
     data_train = file['data']  # Images data for training
     labels_train = file['labels']  # Images labels for training
-    file = unpickle(DATAPATH + D_BATCH[1])
-    data_val = file['data']  # Images data for validation
-    labels_val = file['labels']  # Images labels for validation
+    for i in range(1, len(D_BATCH)):  # Compose the training set
+        file = unpickle(DATAPATH + D_BATCH[i])
+        data_train = np.vstack((data_train, file['data']))  # Vertically stack data
+        labels_train = np.hstack((labels_train, file['labels']))  # Horizontally stack labels
+    # Compose validation data
+    indices_val = np.random.choice(range(data_train.shape[0]), SIZE_VAL, replace=False)  # Select size_val
+    # random without repetition
+    data_val = data_train[indices_val]  # Copy selected data to validation
+    labels_val = labels_train[indices_val]  # Copy selected labels to validation
+    data_train = np.delete(data_train, indices_val, axis=0)  # Remove selected data
+    labels_train = np.delete(labels_train, indices_val)  # Remove selected labels
     # Reading test data
     file = unpickle(DATAPATH + T_BATCH)
     data_test = file['data']  # Images data for testing
@@ -215,45 +279,57 @@ def main():
     weights, bias = initialize_network(data_train, label_names)
 
     n_batch = 100  # Define minibatch size
-    lmb = 0.01  # Define lambda
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
     eta = eta_min  # Define learning rate
-    n_s = 800  # Step size in eta value modification
-    cycles = 3 * 2 * n_s  # Number of eta updates
-    cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
-    n_epoch = cycles / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
-    training_loss = list()  # Training data loss per epoch
-    validation_loss = list()  # Validation data loss per epoch
-    training_cost = list()  # Training data cost per epoch
-    validation_cost = list()  # Validation data cost per epoch
-    eta_val = list()
+    n_s = 2 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
-    # Perform training
-    print("Training model...")
-    for t in tqdm(range(int(n_epoch))):
-        for j in range(int(data_train.shape[1] / n_batch)):
-            eta_val.append(eta)
-            start = j * n_batch
-            end = (j + 1) * n_batch
-            data, s_list = forward_pass(data_train[:, start:end], weights, bias)
-            delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end],
-                                                      weights, lmb, softmax(s_list[-1]))
-            weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
-            bias = [bias[i] - eta * delta_b[i] for i in range(len(bias))]
-            eta = cyclical_update((t * cycles_per_epoch) + j, n_s, eta_min, eta_max)  # Cyclical uptadte of eta
-        training_loss.append(compute_loss(data_train, labels_train, weights, bias))
-        validation_loss.append(compute_loss(data_val, labels_val, weights, bias))
-        training_cost.append(compute_cost(data_train, labels_train, weights, bias, lmb))
-        validation_cost.append(compute_cost(data_val, labels_val, weights, bias, lmb))
-
-    # Show results
-    plt.plot(range(len(eta_val)), eta_val)
-    plt.xlabel("Cycle")
-    plt.ylabel(r"$\eta_{value}$")
-    plt.show()
-    plot_results(training_loss, validation_loss, "loss")
-    plot_results(training_cost, validation_cost, "cost")
+    # Perform training in order to get the best lambda
+    best_acc = [0, 0]  # The two best accuracies
+    best_lmb = [0, 0]  # The two best lambdas
+    # First lambda search
+    if not os.path.isfile('data1.npz'):
+        for i in range(8):
+            acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
+                                     weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
+                                     plotting=False, best_lambda=None, lmb_search=True)[2:]
+            if acc > best_acc[0]:
+                best_acc[1] = best_acc[0]
+                best_acc[0] = acc
+                best_lmb[1] = best_lmb[0]
+                best_lmb[0] = lmb
+            elif acc > best_acc[1]:
+                best_acc[1] = acc
+                best_lmb[1] = lmb
+        np.savez_compressed('data1.npz', acc=best_acc, lmb=best_lmb)
+    else:
+        dict_data = np.load('data1.npz', allow_pickle=True)
+        best_acc = dict_data['acc']
+        best_lmb = dict_data['lmb']
+    print("Best accuracy in validation: " + str(best_acc))
+    # Second lambda search
+    if not os.path.isfile('data2.npz'):
+        improved_lmb = best_lmb[0]  # Initialize improved lambda as best lambda found
+        improved_acc = best_acc[0]  # Initialize improved accuracy as best lambda found
+        for i in range(8):
+            acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
+                                     weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
+                                     plotting=False, best_lambda=best_lmb, lmb_search=True)[2:]
+            if acc > improved_acc:
+                improved_acc = acc
+                improved_lmb = lmb
+        np.savez_compressed('data2.npz', acc=improved_acc, lmb=improved_lmb)
+    else:
+        dict_data = np.load('data2.npz', allow_pickle=True)
+        improved_acc = dict_data['acc']
+        improved_lmb = dict_data['lmb']
+    print("Best accuracy in validation (improved lambda): " + str(improved_acc))
+    # Training with the best found parameters
+    n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
+    weights, bias = train_network(data_train, labels_train, data_val, labels_val,
+                                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
+                                  plotting=True, best_lambda=improved_lmb, lmb_search=False)[0:2]
+    # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
 
