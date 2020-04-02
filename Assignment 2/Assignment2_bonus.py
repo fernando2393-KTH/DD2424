@@ -6,7 +6,7 @@ from tqdm import tqdm
 DATAPATH = 'Datasets/cifar-10-batches-py/'
 LENGTH = 1024  # Number of pixels of the image
 SIZE = 32  # Pixel dimension of the image
-HIDDEN_NODES = 50  # Number of nodes in the hidden layer
+HIDDEN_NODES = 100  # Number of nodes in the hidden layer
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
 
@@ -56,16 +56,30 @@ def initialize_network(data_train, label_names):
     return weights, bias
 
 
-def forward_pass(data_train, weights, bias):
-    output = list()  # Output of previous layer list
-    s_list = list()  # s values list
-    output.append(np.copy(data_train))
-    s_list.append(compute_s(data_train, weights[0], bias[0]))
-    for i in range(1, len(weights)):
-        output.append(compute_h(s_list[-1]))
-        s_list.append(compute_s(output[-1], weights[i], bias[i]))
+def forward_pass(data_train, weights, bias, dropout=1.0):
+    if dropout == 1.0:
+        output = list()  # Output of previous layer list
+        s_list = list()  # s values list
+        output.append(np.copy(data_train))
+        s_list.append(compute_s(data_train, weights[0], bias[0]))
+        for i in range(1, len(weights)):
+            output.append(compute_h(s_list[-1]))
+            s_list.append(compute_s(output[-1], weights[i], bias[i]))
 
-    return output, s_list
+        return output, s_list
+
+    else:
+        output = list()  # Output of previous layer list
+        s_list = list()  # s values list
+        output.append(np.copy(data_train))
+        s_list.append(compute_s(data_train, weights[0], bias[0]))
+        for i in range(1, len(weights)):
+            h = compute_h(s_list[-1])
+            u = np.random.choice([0, 1], size=h.shape, p=[1 - dropout, dropout]) / dropout
+            output.append(h * u)
+            s_list.append(compute_s(output[-1], weights[i], bias[i]))
+
+        return output, s_list
 
 
 def cyclical_update(t, n_s, eta_min, eta_max):
@@ -227,7 +241,7 @@ def plot_results(train, val, mode):
 
 def train_network(data_train, labels_train, data_val, labels_val,
                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                  plotting=False, best_lambda=None, lmb_search=True):
+                  plotting=False, best_lambda=None, lmb_search=True, dropout=1.0):
     if lmb_search:
         if best_lambda is None:
             l_val = np.random.uniform(-5, -1)  # Random sample from -5 to -1 interval in log10 scale
@@ -253,7 +267,7 @@ def train_network(data_train, labels_train, data_val, labels_val,
             eta_val.append(eta)
             start = j * n_batch
             end = (j + 1) * n_batch
-            data, s_list = forward_pass(data_train[:, start:end], weights, bias)
+            data, s_list = forward_pass(data_train[:, start:end], weights, bias, dropout)
             delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end],
                                                       weights, lmb, softmax(s_list[-1]))
             weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
@@ -296,11 +310,11 @@ def main():
     best_acc = [0, 0]  # The two best accuracies
     best_lmb = [0, 0]  # The two best lambdas
     # First lambda search
-    if not os.path.isfile('Data/data1.npz'):
+    if not os.path.isfile('Data_bonus/data1.npz'):
         for i in range(8):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                                     plotting=False, best_lambda=None, lmb_search=True)[2:]
+                                     plotting=False, best_lambda=None, lmb_search=True, dropout=0.8)[2:]
             if acc > best_acc[0]:
                 best_acc[1] = best_acc[0]
                 best_acc[0] = acc
@@ -309,26 +323,26 @@ def main():
             elif acc > best_acc[1]:
                 best_acc[1] = acc
                 best_lmb[1] = lmb
-        np.savez_compressed('Data/data1.npz', acc=best_acc, lmb=best_lmb)
+        np.savez_compressed('Data_bonus/data1.npz', acc=best_acc, lmb=best_lmb)
     else:
-        dict_data = np.load('Data/data1.npz', allow_pickle=True)
+        dict_data = np.load('Data_bonus/data1.npz', allow_pickle=True)
         best_acc = dict_data['acc']
         best_lmb = dict_data['lmb']
     print("Best accuracy in validation: " + str(best_acc))
     # Second lambda search
-    if not os.path.isfile('Data/data2.npz'):
+    if not os.path.isfile('Data_bonus/data2.npz'):
         improved_lmb = best_lmb[0]  # Initialize improved lambda as best lambda found
         improved_acc = best_acc[0]  # Initialize improved accuracy as best lambda found
         for i in range(8):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
-                                     plotting=False, best_lambda=best_lmb, lmb_search=True)[2:]
+                                     plotting=False, best_lambda=best_lmb, lmb_search=True, dropout=0.8)[2:]
             if acc > improved_acc:
                 improved_acc = acc
                 improved_lmb = lmb
-        np.savez_compressed('Data/data2.npz', acc=improved_acc, lmb=improved_lmb)
+        np.savez_compressed('Data_bonus/data2.npz', acc=improved_acc, lmb=improved_lmb)
     else:
-        dict_data = np.load('Data/data2.npz', allow_pickle=True)
+        dict_data = np.load('Data_bonus/data2.npz', allow_pickle=True)
         improved_acc = dict_data['acc']
         improved_lmb = dict_data['lmb']
     print("Best accuracy in validation (improved lambda): " + str(improved_acc))
@@ -341,7 +355,7 @@ def main():
     n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
                                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
-                                  plotting=True, best_lambda=improved_lmb, lmb_search=False)[0:2]
+                                  plotting=True, best_lambda=improved_lmb, lmb_search=False, dropout=1.0)[0:2]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
