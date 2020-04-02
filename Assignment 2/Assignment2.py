@@ -9,7 +9,6 @@ SIZE = 32  # Pixel dimension of the image
 HIDDEN_NODES = 50  # Number of nodes in the hidden layer
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
-SIZE_VAL = 5000
 
 
 def unpickle(file):
@@ -17,6 +16,31 @@ def unpickle(file):
     with open(file, 'rb') as fo:
         dictionary = pickle.load(fo, encoding='latin1')
     return dictionary
+
+
+def read_data(size_val=5000):
+    file = unpickle(DATAPATH + D_BATCH[0])
+    data_train = file['data']  # Images data for training
+    labels_train = file['labels']  # Images labels for training
+    for i in range(1, len(D_BATCH)):  # Compose the training set
+        file = unpickle(DATAPATH + D_BATCH[i])
+        data_train = np.vstack((data_train, file['data']))  # Vertically stack data
+        labels_train = np.hstack((labels_train, file['labels']))  # Horizontally stack labels
+    # Compose validation data
+    indices_val = np.random.choice(range(data_train.shape[0]), size_val, replace=False)  # Select size_val
+    # random without repetition
+    data_val = data_train[indices_val]  # Copy selected data to validation
+    labels_val = labels_train[indices_val]  # Copy selected labels to validation
+    data_train = np.delete(data_train, indices_val, axis=0)  # Remove selected data
+    labels_train = np.delete(labels_train, indices_val)  # Remove selected labels
+    # Reading test data
+    file = unpickle(DATAPATH + T_BATCH)
+    data_test = file['data']  # Images data for testing
+    labels_test = file['labels']  # Images labels for testing
+    file = unpickle(DATAPATH + 'batches.meta')
+    label_names = file['label_names']  # Images class of each label
+
+    return data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names
 
 
 def initialize_network(data_train, label_names):
@@ -132,6 +156,19 @@ def one_hot(labels, dim):
     return labels_mat
 
 
+def preprocess_data(size_val=5000):
+    data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = read_data(size_val)
+    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)  # Preprocess traning data
+    data_train = data_train.T  # Transpose data to get the appropriate format --> d x n
+    data_val = preprocess_images(data_val, mean_train, std_train)[0].T  # Std. val. using training mean and std
+    data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
+    labels_train = one_hot(labels_train, len(label_names))  # Convert training labels to one-hot matrix
+    labels_val = one_hot(labels_val, len(label_names))  # Convert validation labels to one-hot matrix
+    labels_test = one_hot(labels_test, len(label_names))  # Convert test labels to one-hot matrix
+
+    return data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names
+
+
 def get_images(data):
     result = list()
     for i in range(data.shape[0]):
@@ -245,39 +282,10 @@ def train_network(data_train, labels_train, data_val, labels_val,
 
 def main():
     np.random.seed(8)
-    file = unpickle(DATAPATH + D_BATCH[0])
-    data_train = file['data']  # Images data for training
-    labels_train = file['labels']  # Images labels for training
-    for i in range(1, len(D_BATCH)):  # Compose the training set
-        file = unpickle(DATAPATH + D_BATCH[i])
-        data_train = np.vstack((data_train, file['data']))  # Vertically stack data
-        labels_train = np.hstack((labels_train, file['labels']))  # Horizontally stack labels
-    # Compose validation data
-    indices_val = np.random.choice(range(data_train.shape[0]), SIZE_VAL, replace=False)  # Select size_val
-    # random without repetition
-    data_val = data_train[indices_val]  # Copy selected data to validation
-    labels_val = labels_train[indices_val]  # Copy selected labels to validation
-    data_train = np.delete(data_train, indices_val, axis=0)  # Remove selected data
-    labels_train = np.delete(labels_train, indices_val)  # Remove selected labels
-    # Reading test data
-    file = unpickle(DATAPATH + T_BATCH)
-    data_test = file['data']  # Images data for testing
-    labels_test = file['labels']  # Images labels for testing
-    file = unpickle(DATAPATH + 'batches.meta')
-    label_names = file['label_names']  # Images class of each label
-
-    # Data preprocessing
-    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)  # Preprocess traning data
-    data_train = data_train.T  # Transpose data to get the appropriate format --> d x n
-    data_val = preprocess_images(data_val, mean_train, std_train)[0].T  # Std. val. using training mean and std
-    data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
-    labels_train = one_hot(labels_train, len(label_names))  # Convert training labels to one-hot matrix
-    labels_val = one_hot(labels_val, len(label_names))  # Convert validation labels to one-hot matrix
-    labels_test = one_hot(labels_test, len(label_names))  # Convert test labels to one-hot matrix
-
+    # Read data
+    data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
     # Initialize model parameters
     weights, bias = initialize_network(data_train, label_names)
-
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
@@ -325,6 +333,11 @@ def main():
         improved_lmb = dict_data['lmb']
     print("Best accuracy in validation (improved lambda): " + str(improved_acc))
     # Training with the best found parameters
+    indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random samples in validation
+    data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
+    labels_train = np.hstack((labels_train, labels_val[:, indices_val]))  # Add correspondent labels
+    data_val = np.delete(data_val, indices_val, axis=1)  # Delete selected samples from validation
+    labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
     n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
                                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
