@@ -252,7 +252,7 @@ def plot_results(train, val, mode):
 
 def train_network(data_train, labels_train, data_val, labels_val,
                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                  plotting=False, best_lambda=None, lmb_search=True, dropout=1.0):
+                  plotting=False, best_lambda=None, lmb_search=True, dropout=1.0, eta_bounds=False):
     if lmb_search:
         if best_lambda is None:
             l_val = np.random.uniform(-5, -1)  # Random sample from -5 to -1 interval in log10 scale
@@ -262,10 +262,17 @@ def train_network(data_train, labels_train, data_val, labels_val,
             # the interval defined by the two best previous lambdas in log10 scale
             lmb = pow(10, l_val)  # Define lambda
     else:
-        lmb = pow(10, best_lambda)
-    iterations = cycles * 2 * n_s  # Number of eta updates
-    cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
-    n_epoch = iterations / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
+        if eta_bounds:
+            lmb = 0
+        else:
+            lmb = pow(10, best_lambda)
+    cycles_per_epoch = 0
+    if eta_bounds:
+        n_epoch = 4
+    else:
+        iterations = cycles * 2 * n_s  # Number of eta updates
+        cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
+        n_epoch = iterations / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
     training_loss = list()  # Training data loss per epoch
     validation_loss = list()  # Validation data loss per epoch
     training_cost = list()  # Training data cost per epoch
@@ -275,7 +282,6 @@ def train_network(data_train, labels_train, data_val, labels_val,
     eta_val = list()  # Value of eta per cycle
     for t in tqdm(range(int(n_epoch))):
         for j in range(int(data_train.shape[1] / n_batch)):
-            eta_val.append(eta)
             start = j * n_batch
             end = (j + 1) * n_batch
             data, s_list = forward_pass(data_train[:, start:end], weights, bias, dropout)
@@ -283,7 +289,9 @@ def train_network(data_train, labels_train, data_val, labels_val,
                                                       weights, lmb, softmax(s_list[-1]))
             weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
             bias = [bias[i] - eta * delta_b[i] for i in range(len(bias))]
-            eta = cyclical_update((t * cycles_per_epoch) + j, n_s, eta_min, eta_max)  # Cyclical uptadte of eta
+            if not eta_bounds:
+                eta_val.append(eta)
+                eta = cyclical_update((t * cycles_per_epoch) + j, n_s, eta_min, eta_max)  # Cyclical uptadte of eta
         if plotting:
             training_loss.append(compute_loss(data_train, labels_train, weights, bias))
             validation_loss.append(compute_loss(data_val, labels_val, weights, bias))
@@ -302,7 +310,48 @@ def train_network(data_train, labels_train, data_val, labels_val,
         plot_results(training_loss, validation_loss, "loss")
         plot_results(training_cost, validation_cost, "cost")
 
-    return weights, bias, compute_accuracy(data_val, labels_val, weights, bias), np.log10(lmb)
+    if lmb_search:
+        return compute_accuracy(data_val, labels_val, weights, bias), np.log10(lmb)
+
+    return weights, bias
+
+
+def find_eta_boundaries():
+    # Read training and test data
+    file = unpickle(DATAPATH + D_BATCH[0])
+    data_train = file['data']  # Images data for training
+    labels_train = file['labels']  # Images labels for training
+    for i in range(1, len(D_BATCH)):  # Compose the training set
+        file = unpickle(DATAPATH + D_BATCH[i])
+        data_train = np.vstack((data_train, file['data']))  # Vertically stack data
+        labels_train = np.hstack((labels_train, file['labels']))  # Horizontally stack labels
+    file = unpickle(DATAPATH + T_BATCH)
+    data_test = file['data']  # Images data for testing
+    labels_test = file['labels']  # Images labels for testing
+    file = unpickle(DATAPATH + 'batches.meta')
+    label_names = file['label_names']  # Images class of each label
+    data_train, mean_train, std_train = preprocess_images(data_train, mean=None, std=None)  # Preprocess traning data
+    data_train = data_train.T  # Transpose data to get the appropriate format --> d x n
+    labels_train = one_hot(labels_train, len(label_names))  # Convert training labels to one-hot matrix
+    data_test = preprocess_images(data_test, mean_train, std_train)[0].T  # Std. test using training mean and std
+    labels_test = one_hot(labels_test, len(label_names))  # Convert test labels to one-hot matrix
+
+    # Set the range of values in which look for the boundaries
+    eta_range = np.linspace(0, 0.18, 100)  # Range of values of eta
+    accuracy_list = list()  # Stored accuracies for each eta value
+    weights, bias = initialize_network(data_train, label_names)
+    n_batch = 100  # Define minibatch size
+    for eta in eta_range:
+        weights_aux, bias_aux = train_network(data_train, labels_train, None, None,
+                                              weights, bias, n_batch, eta, 0, 0, 0, cycles=1,
+                                              plotting=False, best_lambda=0, lmb_search=False, eta_bounds=True)
+        accuracy_list.append(compute_accuracy(data_test, labels_test, weights_aux, bias_aux))
+    plt.plot(eta_range, accuracy_list)
+    plt.locator_params(axis='x', nbins="10")
+    plt.locator_params(axis='y', nbins="6")
+    plt.xlabel("Learning rate")
+    plt.ylabel("Accuracy")
+    plt.show()
 
 
 def main():
@@ -326,7 +375,7 @@ def main():
         for i in range(lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                                     plotting=False, best_lambda=None, lmb_search=True)[2:]
+                                     plotting=False, best_lambda=None, lmb_search=True)
             best_acc[i] = acc
             best_lmb[i] = lmb
         indices = find_best_n(best_acc, 3)
@@ -348,7 +397,7 @@ def main():
         for i in range(lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
-                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True)[2:]
+                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True)
             improved_acc[i] = acc
             improved_lmb[i] = lmb
         indices = find_best_n(improved_acc, 3)
@@ -370,7 +419,7 @@ def main():
     n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
                                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
-                                  plotting=True, best_lambda=improved_lmb[0], lmb_search=False)[0:2]
+                                  plotting=True, best_lambda=improved_lmb[0], lmb_search=False)
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
