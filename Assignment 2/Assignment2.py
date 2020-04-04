@@ -18,6 +18,17 @@ def unpickle(file):
     return dictionary
 
 
+def find_best_n(array, n):
+    array_copy = np.copy(array)
+    indices = list()  # Queue of ordered indices of the n maximum elements
+    for i in range(n):
+        index = np.argmax(array_copy)  # Get index of maximum
+        array_copy[index] = -1  # Set maximum element to -1 (all are > 0)
+        indices.append(int(index))  # Insert index as a list in the queue
+
+    return indices
+
+
 def read_data(size_val=5000):
     file = unpickle(DATAPATH + D_BATCH[0])
     data_train = file['data']  # Images data for training
@@ -293,45 +304,49 @@ def main():
     n_s = 2 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
     # Perform training in order to get the best lambda
-    best_acc = [0, 0]  # The two best accuracies
-    best_lmb = [0, 0]  # The two best lambdas
+    lmb_search = 8  # Number of lambda search
+    best_acc = np.zeros(lmb_search)  # The accuracies list
+    best_lmb = np.zeros(lmb_search)  # The lambdas list
     # First lambda search
     if not os.path.isfile('Data/data1.npz'):
-        for i in range(8):
+        for i in range(lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
                                      plotting=False, best_lambda=None, lmb_search=True)[2:]
-            if acc > best_acc[0]:
-                best_acc[1] = best_acc[0]
-                best_acc[0] = acc
-                best_lmb[1] = best_lmb[0]
-                best_lmb[0] = lmb
-            elif acc > best_acc[1]:
-                best_acc[1] = acc
-                best_lmb[1] = lmb
+            best_acc[i] = acc
+            best_lmb[i] = lmb
+        indices = find_best_n(best_acc, 3)
+        best_acc = best_acc[indices]  # Get the three best accuracies
+        best_lmb = best_lmb[indices]  # Get the three best lambdas
         np.savez_compressed('Data/data1.npz', acc=best_acc, lmb=best_lmb)
     else:
         dict_data = np.load('Data/data1.npz', allow_pickle=True)
         best_acc = dict_data['acc']
         best_lmb = dict_data['lmb']
-    print("Best accuracy in validation: " + str(best_acc))
+    print("Best accuracies in validation: " + str(best_acc))
+    print("Best lambdas in validation: " + str(best_lmb))
     # Second lambda search
     if not os.path.isfile('Data/data2.npz'):
-        improved_lmb = best_lmb[0]  # Initialize improved lambda as best lambda found
-        improved_acc = best_acc[0]  # Initialize improved accuracy as best lambda found
-        for i in range(8):
+        improved_acc = np.zeros(lmb_search + 1)
+        improved_lmb = np.zeros(lmb_search + 1)
+        improved_acc[0] = best_acc[0]
+        improved_lmb[0] = best_lmb[0]
+        for i in range(1, lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
-                                     plotting=False, best_lambda=best_lmb, lmb_search=True)[2:]
-            if acc > improved_acc:
-                improved_acc = acc
-                improved_lmb = lmb
+                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True)[2:]
+            improved_acc[i] = acc
+            improved_lmb[i] = lmb
+        indices = find_best_n(improved_acc, 3)
+        improved_acc = improved_acc[indices]  # Get the three best accuracies
+        improved_lmb = improved_lmb[indices]  # Get the three best lambdas
         np.savez_compressed('Data/data2.npz', acc=improved_acc, lmb=improved_lmb)
     else:
         dict_data = np.load('Data/data2.npz', allow_pickle=True)
         improved_acc = dict_data['acc']
         improved_lmb = dict_data['lmb']
-    print("Best accuracy in validation (improved lambda): " + str(improved_acc))
+    print("Improved accuracies in validation: " + str(improved_acc))
+    print("Improved lambdas in validation: " + str(improved_lmb))
     # Training with the best found parameters
     indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random samples in validation
     data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
@@ -341,7 +356,7 @@ def main():
     n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
                                   weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
-                                  plotting=True, best_lambda=improved_lmb, lmb_search=False)[0:2]
+                                  plotting=True, best_lambda=improved_lmb[0], lmb_search=False)[0:2]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
