@@ -305,6 +305,7 @@ def main():
 
     # Perform training in order to get the best lambda
     lmb_search = 8  # Number of lambda search
+    n_lmb = 3  # Best n lambdas to save
     best_acc = np.zeros(lmb_search)  # The accuracies list
     best_lmb = np.zeros(lmb_search)  # The lambdas list
     # First lambda search
@@ -315,7 +316,7 @@ def main():
                                      plotting=False, best_lambda=None, lmb_search=True)[2:]
             best_acc[i] = acc
             best_lmb[i] = lmb
-        indices = find_best_n(best_acc, 3)
+        indices = find_best_n(best_acc, n_lmb)
         best_acc = best_acc[indices]  # Get the three best accuracies
         best_lmb = best_lmb[indices]  # Get the three best lambdas
         np.savez_compressed('Data/data1.npz', acc=best_acc, lmb=best_lmb)
@@ -327,17 +328,17 @@ def main():
     print("Best lambdas in validation: " + str(best_lmb))
     # Second lambda search
     if not os.path.isfile('Data/data2.npz'):
-        improved_acc = np.zeros(lmb_search + 1)
-        improved_lmb = np.zeros(lmb_search + 1)
-        improved_acc[0] = best_acc[0]
-        improved_lmb[0] = best_lmb[0]
+        improved_acc = np.zeros(lmb_search + n_lmb)
+        improved_lmb = np.zeros(lmb_search + n_lmb)
+        improved_acc[0:n_lmb] = best_acc
+        improved_lmb[0:n_lmb] = best_lmb
         for i in range(1, lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
                                      plotting=False, best_lambda=best_lmb[:2], lmb_search=True)[2:]
             improved_acc[i] = acc
             improved_lmb[i] = lmb
-        indices = find_best_n(improved_acc, 3)
+        indices = find_best_n(improved_acc, n_lmb)
         improved_acc = improved_acc[indices]  # Get the three best accuracies
         improved_lmb = improved_lmb[indices]  # Get the three best lambdas
         np.savez_compressed('Data/data2.npz', acc=improved_acc, lmb=improved_lmb)
