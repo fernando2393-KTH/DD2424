@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-DATAPATH = 'Datasets/cifar-10-batches-py/'
+DATAPATH = '../Datasets/cifar-10-batches-py/'
 LENGTH = 1024  # Number of pixels of the image
 SIZE = 32  # Pixel dimension of the image
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
