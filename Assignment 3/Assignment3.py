@@ -6,7 +6,6 @@ from tqdm import tqdm
 DATAPATH = '../Datasets/cifar-10-batches-py/'
 LENGTH = 1024  # Number of pixels of the image
 SIZE = 32  # Pixel dimension of the image
-HIDDEN_NODES = 50  # Number of nodes in the hidden layer
 D_BATCH = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
 T_BATCH = 'test_batch'
 
@@ -54,21 +53,27 @@ def read_data(size_val=5000):
     return data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names
 
 
-def initialize_network(data_train, label_names):
+def initialize_network(data_train, label_names, layer_nodes, layers=2):
     weights = list()
     bias = list()
+    # 1st layer
     weights.append(np.random.normal(0, 1 / np.sqrt(data_train.shape[0]),
-                                    (HIDDEN_NODES, data_train.shape[0])))  # Dim: m x d
-    weights.append(np.random.normal(0, 1 / np.sqrt(HIDDEN_NODES),
-                                    (len(label_names), HIDDEN_NODES)))  # Dim: k x m
-    bias.append(np.zeros((HIDDEN_NODES, 1)))  # Dim: m x 1
+                                    (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
+    bias.append(np.zeros((layer_nodes[0], 1)))  # Dim: m x 1
+    for i in range(1, layers - 1):  # Remaining layers except the last one
+        weights.append(np.random.normal(0, 1 / np.sqrt(weights[-1].shape[0]),
+                       (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
+        bias.append(np.zeros((layer_nodes[i], 1)))  # Dim: l x 1
+    # Last layer
+    weights.append(np.random.normal(0, 1 / np.sqrt(weights[-1].shape[0]),
+                                    (len(label_names), weights[-1].shape[0])))  # Dim: k x m
     bias.append(np.zeros((len(label_names), 1)))  # Dim: k x 1
 
     return weights, bias
 
 
 def forward_pass(data_train, weights, bias):
-    output = list()  # Output of previous layer list
+    output = list()  # Output of previous layer list (take data as the first output)
     s_list = list()  # s values list
     output.append(np.copy(data_train))
     s_list.append(compute_s(data_train, weights[0], bias[0]))
@@ -141,7 +146,7 @@ def compute_grads_analytic(data, labels, weights, lmb, p):
         diag[diag > 0] = 1  # Transform every element > 0 into 1
         # diag[diag < 0] = 0  # Transform every element < 0 into 0
         g = g * diag  # Element multiplication by diagonal of the indicator over data[i]
-        grad_weights.append((g @ data[i].T) / data[0].shape[1] + 2 * lmb * weights[i])
+        grad_weights.append((g @ data[i].T) / data[0].shape[1] + 2 * lmb * weights[i])  # TODO: Review data[0]
         grad_bias.append(np.sum(g, axis=1)[:, np.newaxis] / data[0].shape[1])
     grad_weights.reverse(), grad_bias.reverse()  # Reverse lists to return the same order
 
@@ -248,7 +253,7 @@ def train_network(data_train, labels_train, data_val, labels_val,
             # the interval defined by the two best previous lambdas in log10 scale
             lmb = pow(10, l_val)  # Define lambda
     else:
-        lmb = pow(10, best_lambda)
+        lmb = 0.005
     iterations = cycles * 2 * n_s  # Number of eta updates
     cycles_per_epoch = data_train.shape[1] / n_batch  # Number of eta update cycles per epoch
     n_epoch = iterations / cycles_per_epoch  # Define number of epochs needed to perform "cycles" updates
@@ -296,13 +301,13 @@ def main():
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
     # Initialize model parameters
-    weights, bias = initialize_network(data_train, label_names)
+    weights, bias = initialize_network(data_train, label_names, [50, 50, 10], 3)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
     eta = eta_min  # Define learning rate
     n_s = 2 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
-
+    """
     # Perform training in order to get the best lambda
     lmb_search = 8  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
@@ -348,16 +353,17 @@ def main():
         improved_lmb = dict_data['lmb']
     print("Improved accuracies in validation: " + str(improved_acc))
     print("Improved lambdas in validation: " + str(improved_lmb))
+    """
     # Training with the best found parameters
-    indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random samples in validation
-    data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
-    labels_train = np.hstack((labels_train, labels_val[:, indices_val]))  # Add correspondent labels
-    data_val = np.delete(data_val, indices_val, axis=1)  # Delete selected samples from validation
-    labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
-    n_s = 4 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
+    # indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random samples in validation
+    # data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
+    # labels_train = np.hstack((labels_train, labels_val[:, indices_val]))  # Add correspondent labels
+    # data_val = np.delete(data_val, indices_val, axis=1)  # Delete selected samples from validation
+    # labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
+    n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
-                                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=3,
-                                  plotting=True, best_lambda=improved_lmb[0], lmb_search=False)[0:2]
+                                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
+                                  plotting=True, best_lambda=0.005, lmb_search=False)[0:2]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
 
