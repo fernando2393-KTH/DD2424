@@ -56,6 +56,9 @@ def read_data(size_val=5000):
 def initialize_network(data_train, label_names, layer_nodes, layers=2):
     weights = list()
     bias = list()
+    gamma = list()
+    beta = list()
+    # Weights and bias generation:
     # 1st layer
     weights.append(np.random.normal(0, 1 / np.sqrt(data_train.shape[0]),
                                     (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
@@ -69,19 +72,42 @@ def initialize_network(data_train, label_names, layer_nodes, layers=2):
                                     (len(label_names), weights[-1].shape[0])))  # Dim: k x m
     bias.append(np.zeros((len(label_names), 1)))  # Dim: k x 1
 
-    return weights, bias
+    # Generate gamma and beta: n x 1 vectors
+    for l_nodes in layer_nodes:
+        gamma.append(np.random.normal(0, 1 / np.sqrt(l_nodes), (l_nodes, 1)))  # Dim: m x 1
+        beta.append(np.zeros((l_nodes, 1)))  # Dim: m x 1
+
+    return weights, bias, gamma, beta
 
 
-def forward_pass(data_train, weights, bias):
+def batch_normalize(s, mean, var):
+    return np.diag(np.power(var + np.finfo(float).eps, -1/2)) @ (s.T - mean).T
+
+
+def forward_pass(data_train, weights, bias, gamma, beta):
     output = list()  # Output of previous layer list (take data as the first output)
     s_list = list()  # s values list
+    s_hat_list = list()  # s hat values list
+    mean_list = list()  # mean of s values list
+    var_list = list()  # variance of s values list
     output.append(np.copy(data_train))
     s_list.append(compute_s(data_train, weights[0], bias[0]))
-    for i in range(1, len(weights)):
-        output.append(compute_h(s_list[-1]))
+    mean_list.append(np.mean(s_list[-1], axis=1))  # Calculate mean per dimension
+    var_list.append(np.var(s_list[-1], axis=1))  # Calculate variance per dimension
+    s_hat_list.append(batch_normalize(s_list[-1], mean_list[-1], var_list[-1]))  # Calculate s hat
+    s_tilde = gamma[0] * s_hat_list[-1] + beta[0]
+    for i in range(1, len(weights) - 1):
+        output.append(compute_h(s_tilde))  # Calculate new input by means of s_tilde
         s_list.append(compute_s(output[-1], weights[i], bias[i]))
+        mean_list.append(np.mean(s_list[-1], axis=1))  # Calculate mean per dimension
+        var_list.append(np.var(s_list[-1], axis=1))  # Calculate variance per dimension
+        s_hat_list.append(batch_normalize(s_list[-1], mean_list[-1], var_list[-1]))
+        s_tilde = gamma[i] * s_hat_list[-1] + beta[i]
+    # Last layer
+    output.append(compute_h(s_list[-1]))
+    s_list.append(compute_s(output[-1], weights[-1], bias[-1]))
 
-    return output, s_list
+    return output, s_list, mean_list, var_list
 
 
 def cyclical_update(t, n_s, eta_min, eta_max):
@@ -242,7 +268,7 @@ def plot_results(train, val, mode):
 
 
 def train_network(data_train, labels_train, data_val, labels_val,
-                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
+                  weights, bias, gamma, beta, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
                   plotting=False, best_lambda=None, lmb_search=True):
     if lmb_search:
         if best_lambda is None:
@@ -269,7 +295,7 @@ def train_network(data_train, labels_train, data_val, labels_val,
             eta_val.append(eta)
             start = j * n_batch
             end = (j + 1) * n_batch
-            data, s_list = forward_pass(data_train[:, start:end], weights, bias)
+            data, s_list, mean_list, var_list = forward_pass(data_train[:, start:end], weights, bias, gamma, beta)
             delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end],
                                                       weights, lmb, softmax(s_list[-1]))
             weights = [weights[i] - eta * delta_w[i] for i in range(len(weights))]
@@ -301,7 +327,7 @@ def main():
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
     # Initialize model parameters
-    weights, bias = initialize_network(data_train, label_names, [50, 50, 10], 3)
+    weights, bias, gamma, beta = initialize_network(data_train, label_names, [50, 50, 20, 10], 4)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
@@ -362,7 +388,7 @@ def main():
     # labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
     n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
     weights, bias = train_network(data_train, labels_train, data_val, labels_val,
-                                  weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
+                                  weights, bias, gamma, beta, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
                                   plotting=True, best_lambda=0.005, lmb_search=False)[0:2]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias) * 100) + "%")
