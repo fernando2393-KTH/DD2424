@@ -53,35 +53,39 @@ def read_data(size_val=5000):
     return data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names
 
 
-def initialize_network(data_train, label_names, layer_nodes, layers=2):
+def initialize_network(data_train, label_names, layer_nodes, layers=2, he=False):
     weights = list()
     bias = list()
     gamma = list()
     beta = list()
+    if he:
+        num = 2
+    else:
+        num = 1
     # Weights and bias generation:
     # 1st layer
-    weights.append(np.random.normal(0, 1 / np.sqrt(data_train.shape[0]),
+    weights.append(np.random.normal(0, np.sqrt(num / data_train.shape[0]),
                                     (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
     bias.append(np.zeros((layer_nodes[0], 1)))  # Dim: m x 1
     for i in range(1, layers - 1):  # Remaining layers except the last one
-        weights.append(np.random.normal(0, 1 / np.sqrt(weights[-1].shape[0]),
-                       (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
+        weights.append(np.random.normal(0, np.sqrt(num / weights[-1].shape[0]),
+                                        (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
         bias.append(np.zeros((layer_nodes[i], 1)))  # Dim: l x 1
     # Last layer
-    weights.append(np.random.normal(0, 1 / np.sqrt(weights[-1].shape[0]),
+    weights.append(np.random.normal(0, np.sqrt(num / weights[-1].shape[0]),
                                     (len(label_names), weights[-1].shape[0])))  # Dim: k x m
     bias.append(np.zeros((len(label_names), 1)))  # Dim: k x 1
 
     # Generate gamma and beta: n x 1 vectors
     for l_nodes in layer_nodes[:-1]:  # Generate for all hidden layers
-        gamma.append(np.random.normal(0, 1 / np.sqrt(l_nodes), (l_nodes, 1)))  # Dim: m x 1
+        gamma.append(np.ones((l_nodes, 1)))  # Dim: m x 1
         beta.append(np.zeros((l_nodes, 1)))  # Dim: m x 1
 
     return weights, bias, gamma, beta
 
 
 def batch_normalize(s, mean, var):
-    return np.diag(pow(var + np.finfo(float).eps, -1/2)) @ (s.T - mean).T
+    return np.diag(pow(var + np.finfo(float).eps, -1 / 2)) @ (s.T - mean).T
 
 
 def batch_normalize_back_pass(g, s, mean, var):
@@ -90,7 +94,7 @@ def batch_normalize_back_pass(g, s, mean, var):
     g1 = g * sigma_1
     g2 = g * sigma_2
     d = s - mean[:, np.newaxis]
-    c = g2 * d
+    c = np.sum(g2 * d, axis=1)[:, np.newaxis]
     g_batch = g1 - (1 / g.shape[1]) * np.sum(g1, axis=1)[:, np.newaxis] - (1 / g.shape[1]) * d * c
 
     return g_batch
@@ -102,31 +106,21 @@ def forward_pass(data_train, weights, bias, gamma, beta, mean=None, var=None):
     s_hat_list = list()  # s hat values list
     mean_list = list()  # mean of s values list
     var_list = list()  # variance of s values list
-    output.append(np.copy(data_train))
-    s_list.append(compute_s(data_train, weights[0], bias[0]))
-    if mean is None and var is None:
-        mean_list.append(np.mean(s_list[-1], axis=1))  # Calculate mean per dimension
-        var_list.append(np.var(s_list[-1], axis=1))  # Calculate variance per dimension
-    else:
-        mean_list.append(mean[0])
-        var_list.append(var[0])
-    s_hat_list.append(batch_normalize(s_list[-1], mean_list[-1], var_list[-1]))  # Calculate s hat
-    s_tilde = gamma[0] * s_hat_list[-1] + beta[0]
-    for i in range(1, len(weights) - 1):
-        output.append(compute_h(s_tilde))  # Calculate new input by means of s_tilde
+    output.append(np.copy(data_train))  # Append data train as first output
+    for i in range(len(weights) - 1):
         s_list.append(compute_s(output[-1], weights[i], bias[i]))
         if mean is None and var is None:
-            mean_list.append(np.mean(s_list[-1], axis=1))  # Calculate mean per dimension
-            var_list.append(np.var(s_list[-1], axis=1))  # Calculate variance per dimension
+            mean_list.append(np.mean(s_list[-1], axis=1, dtype=np.float64))  # Calculate mean per dimension
+            var_list.append(np.var(s_list[-1], axis=1, dtype=np.float64))  # Calculate variance per dimension
         else:
             mean_list.append(mean[i])
             var_list.append(var[i])
         s_hat_list.append(batch_normalize(s_list[-1], mean_list[-1], var_list[-1]))
         s_tilde = gamma[i] * s_hat_list[-1] + beta[i]
+        output.append(compute_h(s_tilde))  # Calculate new input by means of s_tilde
     # Last layer
-    output.append(compute_h(s_list[-1]))
     s_list.append(compute_s(output[-1], weights[-1], bias[-1]))
-    output.append(softmax(s_list[-1]))
+    output.append(softmax(s_list[-1]))  # Vector of probabilities p
 
     return output, s_list, s_hat_list, mean_list, var_list
 
@@ -152,9 +146,7 @@ def l_cross(y, p):
 
 
 def compute_s(data, weight, bias):
-    s = weight @ data + bias  # Dim: k x n
-
-    return s
+    return weight @ data + bias  # Dim: k x n
 
 
 def compute_loss(data, labels, weights, bias, gamma, beta, mean=None, var=None):
@@ -373,7 +365,9 @@ def train_network(data_train, labels_train, data_val, labels_val,
         plot_results(training_loss, validation_loss, "loss")
         plot_results(training_cost, validation_cost, "cost")
 
-    return weights, bias, gamma, beta, final_mean, final_var
+    val_acc = compute_accuracy(data_val, labels_val, weights, bias, gamma, beta, final_mean, final_var)
+
+    return weights, bias, gamma, beta, final_mean, final_var, val_acc, np.log10(lmb)
 
 
 def main():
@@ -381,13 +375,13 @@ def main():
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
     # Initialize model parameters
-    weights, bias, gamma, beta = initialize_network(data_train, label_names, [50, 50, 10], 3)
+    weights, bias, gamma, beta = initialize_network(data_train, label_names, [50, 50, 10], 3, he=True)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
     eta = eta_min  # Define learning rate
-    # n_s = 2 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
-    """
+    n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
+
     # Perform training in order to get the best lambda
     lmb_search = 8  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
@@ -397,8 +391,9 @@ def main():
     if not os.path.isfile('Data/data1.npz'):
         for i in range(lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
-                                     weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                                     plotting=False, best_lambda=None, lmb_search=True)[2:]
+                                     weights, bias, gamma, beta, n_batch, eta, n_s,
+                                     eta_min, eta_max, cycles=2,
+                                     plotting=False, best_lambda=None, lmb_search=True)[6:]
             best_acc[i] = acc
             best_lmb[i] = lmb
         indices = find_best_n(best_acc, n_lmb)
@@ -419,8 +414,9 @@ def main():
         improved_lmb[0:n_lmb] = best_lmb
         for i in range(1, lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
-                                     weights, bias, n_batch, eta, n_s, eta_min, eta_max, cycles=4,
-                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True)[2:]
+                                     weights, bias, gamma, beta, n_batch, eta, n_s,
+                                     eta_min, eta_max, cycles=2,
+                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True)[6:]
             improved_acc[i] = acc
             improved_lmb[i] = lmb
         indices = find_best_n(improved_acc, n_lmb)
@@ -433,18 +429,18 @@ def main():
         improved_lmb = dict_data['lmb']
     print("Improved accuracies in validation: " + str(improved_acc))
     print("Improved lambdas in validation: " + str(improved_lmb))
-    """
+
     # Training with the best found parameters
     # indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random validation samples
     # data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
     # labels_train = np.hstack((labels_train, labels_val[:, indices_val]))  # Add correspondent labels
     # data_val = np.delete(data_val, indices_val, axis=1)  # Delete selected samples from validation
     # labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
-    n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
+
     weights, bias, gamma, beta, mean, var = train_network(data_train, labels_train, data_val, labels_val,
                                                           weights, bias, gamma, beta, n_batch, eta, n_s,
-                                                          eta_min, eta_max, cycles=2, plotting=True,
-                                                          best_lambda=0.005, lmb_search=False)
+                                                          eta_min, eta_max, cycles=3, plotting=True,
+                                                          best_lambda=improved_lmb[0], lmb_search=False)[:6]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias,
                                                            gamma, beta, mean, var) * 100) + "%")
