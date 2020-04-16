@@ -72,20 +72,21 @@ def compute_grads_num_slow(data, labels, weights, bias, gamma, beta, lmb, h):
 
 """
 # Compare outcomes (averaged)
-data, s_list, s_hat, mean_list, var_list = forward_pass(data_train, weights, bias, gamma, beta)
+data, s_list, s_hat, mean_list, var_list = forward_pass(data_train, weights, bias, gamma, beta, None, None,
+                                                        b_norm=True)
 delta_w, delta_b, delta_g, delta_bt = compute_grads_analytic([i[:, 0:20] for i in data],
                                                              labels_train[:, 0:20],
                                                              weights, 0, data[-1][:, 0:20],
                                                              [i[:, 0:20] for i in s_list],
                                                              [i[:, 0:20] for i in s_hat],
-                                                             gamma, mean_list, var_list)
+                                                             gamma, mean_list, var_list, b_norm=True)
 
 delta_w_num, delta_b_num, delta_g_num, delta_bt_num = compute_grads_num_slow(data_train[:, 0:20],
                                                                              labels_train[:, 0:20], weights,
                                                                              bias, gamma,
                                                                              beta, 0, 1e-5)
-print([abs(np.mean(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))])
-print([abs(np.mean(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))])
-print([abs(np.mean(delta_g[i] - delta_g_num[i])) for i in range(len(delta_g))])
-print([abs(np.mean(delta_bt[i] - delta_bt_num[i])) for i in range(len(delta_bt))])
+print([np.mean(abs(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))])
+print([np.mean(abs(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))])
+print([np.mean(abs(delta_g[i] - delta_g_num[i])) for i in range(len(delta_g))])
+print([np.mean(abs(delta_bt[i] - delta_bt_num[i])) for i in range(len(delta_bt))])
 """

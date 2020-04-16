@@ -74,6 +74,6 @@ delta_w, delta_b = compute_grads_analytic([i[:, 0:20] for i in data],
                                           labels_train[:, 0:20],
                                           weights, lmb, softmax(s_list[-1][:, 0:20]))
 delta_w_num, delta_b_num = compute_grads_num_slow(data_train[:, 0:20], labels_train[:, 0:20], weights, bias, lmb, 1e-5)
-print([abs(np.mean(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))])
-print([abs(np.mean(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))])
+print([np.mean(abs(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))])
+print([np.mean(abs(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))])
 """
