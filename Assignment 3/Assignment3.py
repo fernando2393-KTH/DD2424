@@ -53,7 +53,7 @@ def read_data(size_val=5000):
     return data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names
 
 
-def initialize_network(data_train, label_names, layer_nodes, layers=2, he=False):
+def initialize_network(data_train, layer_nodes, layers=2, he=False, sigma=None):
     weights = list()
     bias = list()
     gamma = list()
@@ -64,18 +64,20 @@ def initialize_network(data_train, label_names, layer_nodes, layers=2, he=False)
         num = 1
     # Weights and bias generation:
     # 1st layer
-    weights.append(np.random.normal(0, np.sqrt(num / data_train.shape[0]),
-                                    (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
-    bias.append(np.zeros((layer_nodes[0], 1)))  # Dim: m x 1
-    for i in range(1, layers - 1):  # Remaining layers except the last one
-        weights.append(np.random.normal(0, np.sqrt(num / weights[-1].shape[0]),
-                                        (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
-        bias.append(np.zeros((layer_nodes[i], 1)))  # Dim: l x 1
-    # Last layer
-    weights.append(np.random.normal(0, np.sqrt(num / weights[-1].shape[0]),
-                                    (len(label_names), weights[-1].shape[0])))  # Dim: k x m
-    bias.append(np.zeros((len(label_names), 1)))  # Dim: k x 1
+    if sigma is not None:
+        weights.append(np.random.normal(0, sigma, (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
+    else:
+        weights.append(np.random.normal(0, np.sqrt(num / data_train.shape[0]),
+                                        (layer_nodes[0], data_train.shape[0])))  # Dim: m x d
 
+    bias.append(np.zeros((layer_nodes[0], 1)))  # Dim: m x 1
+    for i in range(1, layers):  # Remaining layers
+        if sigma is not None:
+            weights.append(np.random.normal(0, sigma, (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
+        else:
+            weights.append(np.random.normal(0, np.sqrt(num / weights[-1].shape[0]),
+                                            (layer_nodes[i], weights[-1].shape[0])))  # Dim: l x m
+        bias.append(np.zeros((layer_nodes[i], 1)))  # Dim: l x 1
     # Generate gamma and beta: n x 1 vectors
     for l_nodes in layer_nodes[:-1]:  # Generate for all hidden layers
         gamma.append(np.ones((l_nodes, 1)))  # Dim: m x 1
@@ -85,7 +87,7 @@ def initialize_network(data_train, label_names, layer_nodes, layers=2, he=False)
 
 
 def batch_normalize(s, mean, var):
-    return np.diag(pow(var + np.finfo(float).eps, -1 / 2)) @ (s.T - mean).T
+    return np.diag(pow(var + np.finfo(float).eps, -1 / 2)) @ (s - mean[:, np.newaxis])
 
 
 def batch_normalize_back_pass(g, s, mean, var):
@@ -224,10 +226,11 @@ def compute_grads_analytic(data, labels, weights, lmb, p, s_list, s_hat=None, ga
             # Update of the previous layer
             grad_weights.append((g @ data[i].T) / data[0].shape[1] + 2 * lmb * weights[i])
             grad_bias.append(np.sum(g, axis=1)[:, np.newaxis] / data[0].shape[1])
-            g = weights[i].T @ g  # Multiply by previous weight
-            diag = np.copy(data[i])  # Perform a copy of the output of the previous layer
-            diag[diag > 0] = 1  # Transform every element > 0 into 1
-            g = g * diag  # Element multiplication by diagonal of the indicator over data[i]
+            if i > 0:
+                g = weights[i].T @ g  # Multiply by previous weight
+                diag = np.copy(data[i])  # Perform a copy of the output of the previous layer
+                diag[diag > 0] = 1  # Transform every element > 0 into 1
+                g = g * diag  # Element multiplication by diagonal of the indicator over data[i]
 
         # Reverse lists to return the same order
         grad_weights.reverse(), grad_bias.reverse(), grad_gamma.reverse(), grad_beta.reverse()
@@ -394,12 +397,11 @@ def train_network(data_train, labels_train, data_val, labels_val,
 
 
 def main():
-    np.random.seed(8)
+    np.random.seed(40)
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
-    # Initialize model parameters
-    weights, bias, gamma, beta = initialize_network(data_train, label_names, [50, 50, 10],
-                                                    3, he=True)
+    # Initialize model parameters for 100 features - 1000 samples
+    weights, bias, gamma, beta = initialize_network(data_train, [50, 50, 10], 3, he=True, sigma=None)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
@@ -407,7 +409,7 @@ def main():
     n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
     # Perform training in order to get the best lambda
-    lmb_search = 8  # Number of lambda search
+    lmb_search = 20  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
     best_acc = np.zeros(lmb_search)  # The accuracies list
     best_lmb = np.zeros(lmb_search)  # The lambdas list
@@ -454,17 +456,11 @@ def main():
     print("Improved accuracies in validation: " + str(improved_acc))
     print("Improved lambdas in validation: " + str(improved_lmb))
 
-    # Training with the best found parameters
-    # indices_val = np.random.choice(range(data_val.shape[1]), 4000, replace=False)  # Select random validation samples
-    # data_train = np.hstack((data_train, data_val[:, indices_val]))  # Add previous samples to the training set
-    # labels_train = np.hstack((labels_train, labels_val[:, indices_val]))  # Add correspondent labels
-    # data_val = np.delete(data_val, indices_val, axis=1)  # Delete selected samples from validation
-    # labels_val = np.delete(labels_val, indices_val, axis=1)  # Delete correspondent labels
-
+    # Final training
     weights, bias, gamma, beta, mean, var = train_network(data_train, labels_train, data_val, labels_val,
                                                           weights, bias, gamma, beta, n_batch, eta, n_s,
-                                                          eta_min, eta_max, cycles=2, plotting=True,
-                                                          best_lambda=np.log10(0.005), lmb_search=False,
+                                                          eta_min, eta_max, cycles=3, plotting=True,
+                                                          best_lambda=improved_lmb[0], lmb_search=False,
                                                           b_norm=True)[:6]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias,
