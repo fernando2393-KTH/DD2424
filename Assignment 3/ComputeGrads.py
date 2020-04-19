@@ -74,11 +74,10 @@ def compute_grads_num_slow(data, labels, weights, bias, gamma, beta, lmb, h, b_n
 # Read data
 data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
 # Initialize model parameters for 100 features - 1000 samples
-weights, bias, gamma, beta = initialize_network(data_train[0:100, 0:1000], label_names, [50, 50, 10],
+weights, bias, gamma, beta = initialize_network(data_train[0:100, 0:1000], [50, 50, 10],
                                                 3, he=True)
 data, s_list, s_hat, mean_list, var_list = forward_pass(data_train[0:100, 0:1000], weights, bias, gamma, beta, None,
-                                                        None,
-                                                        b_norm=True)  # Compute forward pass for analytic
+                                                        None, b_norm=True)  # Compute forward pass for analytic
 delta_w, delta_b, delta_g, delta_bt = compute_grads_analytic(data, labels_train[:, 0:1000],
                                                              weights, 0, data[-1],
                                                              s_list, s_hat,
@@ -87,8 +86,8 @@ delta_w_num, delta_b_num, delta_g_num, delta_bt_num = compute_grads_num_slow(dat
                                                                              labels_train[:, 0:1000], weights,
                                                                              bias, gamma,
                                                                              beta, 0, 1e-5, b_norm=True)
-print([np.mean(abs(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))])
-print([np.mean(abs(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))])
-print([np.mean(abs(delta_g[i] - delta_g_num[i])) for i in range(len(delta_g))])
-print([np.mean(abs(delta_bt[i] - delta_bt_num[i])) for i in range(len(delta_bt))])
+print("Weights:" + str([np.mean(abs(delta_w[i] - delta_w_num[i])) for i in range(len(delta_w))]))
+print("Bias:" + str([np.mean(abs(delta_b[i] - delta_b_num[i])) for i in range(len(delta_b))]))
+print("Gamma:" + str([np.mean(abs(delta_g[i] - delta_g_num[i])) for i in range(len(delta_g))]))
+print("Beta:" + str([np.mean(abs(delta_bt[i] - delta_bt_num[i])) for i in range(len(delta_bt))]))
 """

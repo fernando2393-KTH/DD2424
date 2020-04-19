@@ -304,10 +304,11 @@ def train_network(data_train, labels_train, data_val, labels_val,
                   plotting=False, best_lambda=None, lmb_search=True, alpha=0.9, b_norm=False):
     if lmb_search:
         if best_lambda is None:
-            l_val = np.random.uniform(-5, -1)  # Random sample from -5 to -1 interval in log10 scale
+            l_val = np.random.uniform(-3, -2)  # Random sample from -5 to -1 interval in log10 scale
             lmb = pow(10, l_val)  # Get random lambda
         else:
-            l_val = np.random.uniform(best_lambda[0], best_lambda[1])  # Random sample from
+            dist = abs(best_lambda[0] - best_lambda[1])  # Distance interval
+            l_val = np.random.uniform(best_lambda[0] - dist, best_lambda[0] + dist)  # Random sample from
             # the interval defined by the two best previous lambdas in log10 scale
             lmb = pow(10, l_val)  # Define lambda
     else:
@@ -397,10 +398,9 @@ def train_network(data_train, labels_train, data_val, labels_val,
 
 
 def main():
-    np.random.seed(40)
+    np.random.seed(8)
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
-    # Initialize model parameters for 100 features - 1000 samples
     weights, bias, gamma, beta = initialize_network(data_train, [50, 50, 10], 3, he=True, sigma=None)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
@@ -409,7 +409,7 @@ def main():
     n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
     # Perform training in order to get the best lambda
-    lmb_search = 20  # Number of lambda search
+    lmb_search = 10  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
     best_acc = np.zeros(lmb_search)  # The accuracies list
     best_lmb = np.zeros(lmb_search)  # The lambdas list
