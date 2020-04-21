@@ -86,6 +86,18 @@ def initialize_network(data_train, layer_nodes, layers=2, he=False, sigma=None):
     return weights, bias, gamma, beta
 
 
+def add_jitter(data):
+    noise = np.random.uniform(np.min(data), np.max(data), (LENGTH, data.shape[1]))  # Create noise for 1/3 of the pixels
+    indices = np.random.choice(data.shape[0], noise.shape[0], replace=False)  # Select random positions of the image
+    jitter = np.zeros_like(data)
+    jitter[indices] = noise
+    jitter_img = data + jitter
+    jitter_img[jitter_img > np.max(data)] = np.max(data)  # Avoid value overflow
+    jitter_img[jitter_img < np.min(data)] = np.min(data)  # Avoid value underflow
+
+    return jitter_img
+
+
 def batch_normalize(s, mean, var):
     return np.diag(pow(var + np.finfo(float).eps, -1 / 2)) @ (s - mean[:, np.newaxis])
 
@@ -102,14 +114,19 @@ def batch_normalize_back_pass(g, s, mean, var):
     return g_batch
 
 
-def forward_pass(data_train, weights, bias, gamma=None, beta=None, mean=None, var=None, b_norm=False):
+def forward_pass(data_train, weights, bias, gamma=None, beta=None, mean=None, var=None, b_norm=False, dropout=1.0):
     if not b_norm:
         output = list()  # Output of previous layer list (take data as the first output)
         s_list = list()  # s values list
         output.append(np.copy(data_train))  # Append data train as first output
         for i in range(len(weights) - 1):
             s_list.append(compute_s(output[-1], weights[i], bias[i]))
-            output.append(compute_h(s_list[-1]))
+            if dropout != 1.0:
+                h = compute_h(s_list[-1])  # Calculate h value using s
+                u = np.random.choice([0, 1], size=h.shape, p=[1 - dropout, dropout]) / dropout  # Choose dropped nodes
+                output.append(h * u)  # Apply dropout to h
+            else:
+                output.append(compute_h(s_list[-1]))
         s_list.append(compute_s(output[-1], weights[-1], bias[-1]))
         output.append(softmax(s_list[-1]))  # Vector of probabilities p
 
@@ -132,7 +149,12 @@ def forward_pass(data_train, weights, bias, gamma=None, beta=None, mean=None, va
                 var_list.append(var[i])
             s_hat_list.append(batch_normalize(s_list[-1], mean_list[-1], var_list[-1]))
             s_tilde = gamma[i] * s_hat_list[-1] + beta[i]
-            output.append(compute_h(s_tilde))  # Calculate new input by means of s_tilde
+            if dropout != 1.0:
+                h = compute_h(s_tilde)  # Calculate h value using s_tilde
+                u = np.random.choice([0, 1], size=h.shape, p=[1 - dropout, dropout]) / dropout  # Choose dropped nodes
+                output.append(h * u)  # Apply dropout to h
+            else:
+                output.append(compute_h(s_tilde))  # Calculate new input by means of s_tilde
         # Last layer
         s_list.append(compute_s(output[-1], weights[-1], bias[-1]))
         output.append(softmax(s_list[-1]))  # Vector of probabilities p
@@ -290,6 +312,19 @@ def read_image(colors):
     return np.dstack((red, green, blue))  # Combine the three color channels
 
 
+def visualize_images(images, labels, label_names, number=5):
+    ig, axes = plt.subplots(number, number)
+    indices = np.random.choice(range(len(images)), pow(number, 2))
+    labels_aux = np.argmax(labels, axis=0)
+    for i in range(number):
+        for j in range(number):
+            axes[i, j].set_axis_off()
+            axes[i, j].text(0.5, -0.5, 'Category: ' + str(label_names[labels_aux[indices[i * number + j]]]),
+                            size=6, ha="center", transform=axes[i, j].transAxes)
+            axes[i, j].imshow(images[indices[i * number + j]], interpolation='bicubic')
+    plt.show()
+
+
 def plot_results(train, val, mode):
     plt.plot(range(len(train)), train, label="Training " + mode, color="Green")
     plt.plot(range(len(val)), val, label="Validation " + mode, color="Red")
@@ -301,7 +336,8 @@ def plot_results(train, val, mode):
 
 def train_network(data_train, labels_train, data_val, labels_val,
                   weights, bias, gamma, beta, n_batch, eta, n_s, eta_min, eta_max, cycles=2,
-                  plotting=False, best_lambda=None, lmb_search=True, alpha=0.9, b_norm=False):
+                  plotting=False, best_lambda=None, lmb_search=True, alpha=0.9, b_norm=False,
+                  dropout=1.0, jitter=False):
     if lmb_search:
         if best_lambda is None:
             l_val = np.random.uniform(-3, -2)  # Random sample from -5 to -1 interval in log10 scale
@@ -331,7 +367,9 @@ def train_network(data_train, labels_train, data_val, labels_val,
             start = j * n_batch
             end = (j + 1) * n_batch
             if not b_norm:
-                data, s_list = forward_pass(data_train[:, start:end], weights, bias)
+                data, s_list = forward_pass(data_train[:, start:end] if not jitter else
+                                            add_jitter(data_train[:, start:end]),
+                                            weights, bias, dropout=dropout)
                 delta_w, delta_b = compute_grads_analytic(data, labels_train[:, start:end], weights, lmb,
                                                           data[-1], s_list)
                 # Update parameters with the gradients
@@ -340,7 +378,10 @@ def train_network(data_train, labels_train, data_val, labels_val,
 
             else:
                 data, s_list, s_hat_list, mean_list, var_list = \
-                    forward_pass(data_train[:, start:end], weights, bias, gamma, beta, None, None, b_norm)
+                    forward_pass(data_train[:, start:end] if not jitter else
+                                 add_jitter(data_train[:, start:end]),
+                                 weights, bias, gamma, beta, None, None, b_norm,
+                                 dropout=dropout)
                 delta_w, delta_b, delta_g, delta_bt = compute_grads_analytic(data, labels_train[:, start:end],
                                                                              weights, lmb, data[-1], s_list, s_hat_list,
                                                                              gamma, mean_list, var_list, b_norm)
@@ -398,10 +439,10 @@ def train_network(data_train, labels_train, data_val, labels_val,
 
 
 def main():
-    np.random.seed(8)
+    np.random.seed(40)
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
-    weights, bias, gamma, beta = initialize_network(data_train, [50, 50, 10], 3, he=True, sigma=None)
+    weights, bias, gamma, beta = initialize_network(data_train, [200, 50, 10], 3, he=True, sigma=None)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
@@ -409,31 +450,32 @@ def main():
     n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
     # Perform training in order to get the best lambda
-    lmb_search = 10  # Number of lambda search
+    lmb_search = 6  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
     best_acc = np.zeros(lmb_search)  # The accuracies list
     best_lmb = np.zeros(lmb_search)  # The lambdas list
     # First lambda search
-    if not os.path.isfile('Data/data1.npz'):
+    if not os.path.isfile('Data_bonus/data1.npz'):
         for i in range(lmb_search):
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, gamma, beta, n_batch, eta, n_s,
                                      eta_min, eta_max, cycles=2,
-                                     plotting=False, best_lambda=None, lmb_search=True, b_norm=True)[6:]
+                                     plotting=False, best_lambda=None, lmb_search=True, b_norm=True,
+                                     dropout=0.8)[6:]
             best_acc[i] = acc
             best_lmb[i] = lmb
         indices = find_best_n(best_acc, n_lmb)
         best_acc = best_acc[indices]  # Get the three best accuracies
         best_lmb = best_lmb[indices]  # Get the three best lambdas
-        np.savez_compressed('Data/data1.npz', acc=best_acc, lmb=best_lmb)
+        np.savez_compressed('Data_bonus/data1.npz', acc=best_acc, lmb=best_lmb)
     else:
-        dict_data = np.load('Data/data1.npz', allow_pickle=True)
+        dict_data = np.load('Data_bonus/data1.npz', allow_pickle=True)
         best_acc = dict_data['acc']
         best_lmb = dict_data['lmb']
     print("Best accuracies in validation: " + str(best_acc))
     print("Best lambdas in validation: " + str(best_lmb))
     # Second lambda search
-    if not os.path.isfile('Data/data2.npz'):
+    if not os.path.isfile('Data_bonus/data2.npz'):
         improved_acc = np.zeros(lmb_search + n_lmb)
         improved_lmb = np.zeros(lmb_search + n_lmb)
         improved_acc[0:n_lmb] = best_acc
@@ -442,15 +484,16 @@ def main():
             acc, lmb = train_network(data_train, labels_train, data_val, labels_val,
                                      weights, bias, gamma, beta, n_batch, eta, n_s,
                                      eta_min, eta_max, cycles=2,
-                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True, b_norm=True)[6:]
+                                     plotting=False, best_lambda=best_lmb[:2], lmb_search=True, b_norm=True,
+                                     dropout=0.8)[6:]
             improved_acc[i] = acc
             improved_lmb[i] = lmb
         indices = find_best_n(improved_acc, n_lmb)
         improved_acc = improved_acc[indices]  # Get the three best accuracies
         improved_lmb = improved_lmb[indices]  # Get the three best lambdas
-        np.savez_compressed('Data/data2.npz', acc=improved_acc, lmb=improved_lmb)
+        np.savez_compressed('Data_bonus/data2.npz', acc=improved_acc, lmb=improved_lmb)
     else:
-        dict_data = np.load('Data/data2.npz', allow_pickle=True)
+        dict_data = np.load('Data_bonus/data2.npz', allow_pickle=True)
         improved_acc = dict_data['acc']
         improved_lmb = dict_data['lmb']
     print("Improved accuracies in validation: " + str(improved_acc))
@@ -461,7 +504,7 @@ def main():
                                                           weights, bias, gamma, beta, n_batch, eta, n_s,
                                                           eta_min, eta_max, cycles=3, plotting=True,
                                                           best_lambda=improved_lmb[0], lmb_search=False,
-                                                          b_norm=True)[:6]
+                                                          b_norm=True, dropout=1.0, jitter=True)[:6]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias,
                                                            gamma, beta, mean, var, b_norm=True) * 100) + "%")
