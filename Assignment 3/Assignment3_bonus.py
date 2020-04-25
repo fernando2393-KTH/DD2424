@@ -442,7 +442,7 @@ def main():
     np.random.seed(40)
     # Read data
     data_train, labels_train, data_val, labels_val, data_test, labels_test, label_names = preprocess_data(size_val=5000)
-    weights, bias, gamma, beta = initialize_network(data_train, [200, 50, 10], 3, he=True, sigma=None)
+    weights, bias, gamma, beta = initialize_network(data_train, [50, 50, 10], 3, he=True, sigma=None)
     n_batch = 100  # Define minibatch size
     eta_min = 1e-5  # Minimum value of eta
     eta_max = 1e-1  # Maximum value of eta
@@ -450,7 +450,7 @@ def main():
     n_s = 5 * int(data_train.shape[1] / n_batch)  # Step size in eta value modification
 
     # Perform training in order to get the best lambda
-    lmb_search = 6  # Number of lambda search
+    lmb_search = 40  # Number of lambda search
     n_lmb = 3  # Best n lambdas to save
     best_acc = np.zeros(lmb_search)  # The accuracies list
     best_lmb = np.zeros(lmb_search)  # The lambdas list
@@ -461,7 +461,7 @@ def main():
                                      weights, bias, gamma, beta, n_batch, eta, n_s,
                                      eta_min, eta_max, cycles=2,
                                      plotting=False, best_lambda=None, lmb_search=True, b_norm=True,
-                                     dropout=0.8)[6:]
+                                     dropout=1.0)[6:]
             best_acc[i] = acc
             best_lmb[i] = lmb
         indices = find_best_n(best_acc, n_lmb)
@@ -485,7 +485,7 @@ def main():
                                      weights, bias, gamma, beta, n_batch, eta, n_s,
                                      eta_min, eta_max, cycles=2,
                                      plotting=False, best_lambda=best_lmb[:2], lmb_search=True, b_norm=True,
-                                     dropout=0.8)[6:]
+                                     dropout=1.0)[6:]
             improved_acc[i] = acc
             improved_lmb[i] = lmb
         indices = find_best_n(improved_acc, n_lmb)
@@ -504,7 +504,7 @@ def main():
                                                           weights, bias, gamma, beta, n_batch, eta, n_s,
                                                           eta_min, eta_max, cycles=3, plotting=True,
                                                           best_lambda=improved_lmb[0], lmb_search=False,
-                                                          b_norm=True, dropout=1.0, jitter=True)[:6]
+                                                          b_norm=True, dropout=1.0, jitter=False)[:6]
     # Check accuracy over test data
     print("Accuracy on test data: " + str(compute_accuracy(data_test, labels_test, weights, bias,
                                                            gamma, beta, mean, var, b_norm=True) * 100) + "%")
