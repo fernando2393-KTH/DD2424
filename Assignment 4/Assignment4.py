@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import copy
 from tqdm import tqdm
 
 PATH = "../Datasets/"
@@ -75,9 +76,7 @@ def backprop(rnn, y, p, h, h_prev, a, x):
         grad_h.append(grad_o[t][np.newaxis, :] @ rnn.v + grad_a[-1] @ rnn.w)
         grad_a.append(grad_h[-1] @ np.diag(1 - np.power(np.tanh(a[:, t]), 2)))
 
-    grad_h.reverse()  # Reverse h gradient so it goes forwards
     grad_a.reverse()  # Reverse a gradient so it goes forwards
-    # grad_h = np.vstack(grad_h)  # Stack gradients of h as a matrix
     grad_a = np.vstack(grad_a)  # Stack gradients of a as a matrix
     rnn_grads = RNN()  # Define rnn object to store the gradients
     rnn_grads.v = grad_o.T @ h.T
@@ -112,7 +111,7 @@ def adagrad(m_old, g, param_old, eta):
 
 
 def main():
-    np.random.seed(42)
+    np.random.seed(40)
     char_to_ind = {}
     ind_to_char = {}
     book_chars, book_unique_chars = read_data()
@@ -128,6 +127,8 @@ def main():
     loss_list = list()
     smooth_loss = 0
     m_list = [0, 0, 0, 0, 0]
+    best_rnn = RNN()
+    best_loss = float('inf')
     for epoch in tqdm(range(2)):
         while e <= len(book_chars) - rnn.seq_length:  # Epoch iteration
             # Choose the sample characters
@@ -145,24 +146,33 @@ def main():
             if e == 0 and epoch == 0:
                 smooth_loss = compute_loss(y, p)
                 loss_list.append(smooth_loss)
+                best_rnn = copy.deepcopy(rnn)  # Select first model as the best one
+                best_loss = smooth_loss  # Update best loss with the new one
             else:
                 smooth_loss = 0.999 * smooth_loss + 0.001 * compute_loss(y, p)
+                if smooth_loss < best_loss:  # Check model loss
+                    best_rnn = copy.deepcopy(rnn)  # Update best model
+                    best_loss = smooth_loss  # Update best loss
                 if e % (rnn.seq_length * 100) == 0:
                     loss_list.append(smooth_loss)
-            if e % (rnn.seq_length * 5000) == 0:
-                x_0 = x[:, 0][:, np.newaxis]
-                samples = synthesize(rnn, h_prev, x_0, 200)
-                samples = [ind_to_char[int(np.argmax(samples[:, n]))] for n in range(samples.shape[1])]
-                print("\n###########################")
-                print("".join(samples))
-                print("###########################")
             h_prev = h[:, -1]  # h_prev updated to the last computed hidden state
             e += rnn.seq_length  # Update the pointer
         e = 0  # Reset e when there are no enough characters
         h_prev = np.zeros(h_prev.shape)  # Reset h_prev to 0
 
-    plt.plot(range(len(loss_list)), loss_list)
+    plt.plot(np.arange(len(loss_list)) * 100, loss_list)
+    plt.xlabel("Update step")
+    plt.ylabel("Loss")
     plt.show()
+
+    x_0 = one_hot('.', char_to_ind)
+    print("Lowest loss: " + str(best_loss))
+    h_prev = np.zeros(rnn.m)
+    samples = synthesize(best_rnn, h_prev, x_0, 1000)
+    samples = [ind_to_char[int(np.argmax(samples[:, n]))] for n in range(samples.shape[1])]
+    print("\n")
+    print("".join(samples))
+    print("\n")
 
 
 if __name__ == "__main__":
